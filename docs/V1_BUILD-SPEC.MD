@@ -1,6 +1,6 @@
 # Claude Code Build Spec — Email Server
 
-**Status:** v1.1 — READY FOR M0  
+**Status:** v1.2 — M0 and M1 complete, READY FOR M2  
 **Derived from:** `Email_Server_R1_SRD.md` (the requirements document — read it first) + planning review (2026-08-27)  
 **Audience:** Claude Code (the coding agent) + the builder (product owner)
 
@@ -8,6 +8,7 @@
 |---------|------|---------|
 | v1.0 | 2026-08-26 | Initial spec. All milestones M0–M7 scoped and acceptance criteria defined. |
 | v1.1 | 2026-08-27 | Planning review with Claude Code. Rescoped M5 to match the SRD's R1/R3 boundary (dropped self-service unsubscribe/preferences pages). Replaced the V1 Supabase Auth requirement with a lightweight admin-access gate (SRD assumes a trusted single admin, not a user system). Added a `name` field to subscribers (required by FR-3.2, missing from the original schema). Added a test-send capability (called for in SRD §9.2/§8.2, missing from v1.0). Flagged the sequential per-subscriber send loop as insufficient for NFR-1.1. Milestones and acceptance criteria are now the binding contract; schema and code samples throughout are illustrative, not prescriptive — see the note below. |
+| v1.2 | 2026-08-27 | M0 and M1 built, verified locally, deployed to Render, and tested on a real phone (see §8 checkboxes). Documented decisions made during the build: default-newsletter auto-provisioning (§4.7), the temporary root-path redirect (§4.8), the `(protected)` admin route group convention (§4.9), and a Supabase query gotcha for future milestones (§7.5). Render deployment moved earlier than M7 — see §9. |
 
 > **How to use this document.**
 > The SRD says *what* and *why*. This spec says *how, with what, and in what order*.
@@ -178,6 +179,42 @@ admin's own address, separate from the full-list send.
 **Why:** The SRD's admin workflow (§9.2, step 6) and UI spec (§8.2, "Save and Test
 Send buttons") both call for this; the v1.0 build spec omitted it.
 
+### 4.7 Default `email_server` is auto-provisioned, not created via UI
+
+**Decision:** M1 needed subscribers to belong to *some* `email_server`, but no
+account-creation UI exists until M6. Rather than block M1 on building one, the
+server auto-creates a single default row (`"AI PM Perspective"`, per the SRD's
+stated R1 use case) the first time it's needed, cached in-process
+(`src/lib/emailServer.ts`). There is no setup screen for this in M1 — it just
+exists.
+
+**Why:** Avoids pulling M6 scope forward just to unblock M1. M6 replaces this
+with a real account-switcher UI; the underlying `email_server_id` data model
+doesn't change.
+
+### 4.8 Root path (`/`) redirects to `/admin` — temporary
+
+**Decision:** `src/app/page.tsx` redirects to `/admin`. Nothing real lives at
+root yet.
+
+**Why:** Without this, the public Render URL showed the unedited
+create-next-app template ("To get started, edit page.tsx") — confusing on a
+deployed link. M5 (public `/subscribe`) or M6 (real dashboard/landing page)
+should revisit what belongs at `/`; this redirect is a placeholder, not a
+final decision.
+
+### 4.9 Admin pages are grouped under `/admin/(protected)/`
+
+**Decision:** Every logged-in-only admin page lives in the
+`(protected)` route group (e.g. `src/app/admin/(protected)/subscribers/`),
+which supplies a shared nav layout. `/admin/login` sits outside that group, at
+`src/app/admin/login/`, so the login page doesn't inherit nav chrome meant for
+authenticated pages.
+
+**Why:** Keeps the "logged in vs. not" boundary visible in the file structure
+itself. Future milestones (M2's builder, M4's send page) should add new pages
+under this same `(protected)` group rather than directly under `admin/`.
+
 ---
 
 ## 5. Data Model & Database Schema
@@ -187,6 +224,12 @@ column types, indexes, etc. as needed during M0/M1 as long as the data it needs 
 hold (§7 of the SRD, plus §4.5 above) is covered.
 
 ### 5.1 Tables (Postgres via Supabase)
+
+> **`supabase/schema.sql` in the repo is the authoritative, current schema —
+> it has already diverged from the snippet below** (a `unique(email_server_id,
+> email)` constraint and explicit `grant` statements were added during M1;
+> see the file's own comments for why). Treat this snippet as historical
+> illustration of the starting shape, not a source to copy from.
 
 ```sql
 -- Email_Servers: account metadata (one per newsletter, e.g. "AI PM Perspective", "Dog Rescue")
@@ -450,6 +493,16 @@ async function sendEmails(email_server_id: string, subscribers: Subscriber[]) {
 - Subscriber list: swipe actions or a menu for edit/delete on mobile.
 - Email builder: tabs or accordion for sections (not side-by-side on mobile).
 
+### 7.5 Supabase gotcha: avoid `select(..., { head: true })`
+
+M0 hit this directly: a count-only query using `head: true` (which issues an
+HTTP `HEAD` request) hung/misbehaved against this project and made
+`/api/health` silently report success on a failed query. Switching to a plain
+`GET`-shaped query (e.g. `.select("id").limit(1)`, or `count: "exact"`
+*without* `head: true`) fixed it immediately and has been reliable since.
+Future milestones needing a count (e.g. M2/M6 dashboards) should use the
+non-`head` form.
+
 ---
 
 ## 8. Milestones & Acceptance Criteria
@@ -469,11 +522,11 @@ async function sendEmails(email_server_id: string, subscribers: Subscriber[]) {
 8. Verify local dev server runs (`npm run dev`), admin routes are blocked without the secret, and Supabase queries work from a server route.
 
 **Acceptance Criteria:**
-- [ ] Repo exists on GitHub with a clean commit history.
-- [ ] `npm run dev` starts the Next.js dev server without errors.
-- [ ] Admin routes/UI reject access without the shared secret, and allow it with the correct one.
-- [ ] A server route can read/write to Supabase (e.g., create and fetch an `email_servers` row).
-- [ ] `.env.local` is in `.gitignore`.
+- [x] Repo exists on GitHub with a clean commit history.
+- [x] `npm run dev` starts the Next.js dev server without errors.
+- [x] Admin routes/UI reject access without the shared secret, and allow it with the correct one.
+- [x] A server route can read/write to Supabase (e.g., create and fetch an `email_servers` row).
+- [x] `.env.local` is in `.gitignore`.
 
 ---
 
@@ -492,14 +545,14 @@ async function sendEmails(email_server_id: string, subscribers: Subscriber[]) {
 8. Test all operations on mobile and desktop.
 
 **Acceptance Criteria:**
-- [ ] Admin can view list of subscribers (50 per page, sorted by created_at desc).
-- [ ] Admin can add a subscriber with email + optional name.
-- [ ] Admin can update a subscriber's name/preference.
-- [ ] Admin can delete a subscriber (shows confirmation).
-- [ ] Unsubscribed subscribers are hidden by default (toggle to show).
-- [ ] All forms validate email format and show errors.
-- [ ] All interactions work on mobile (touch-friendly, no horizontal scroll).
-- [ ] Subscriber routes are unreachable without the admin secret (§4.1).
+- [x] Admin can view list of subscribers (50 per page, sorted by created_at desc).
+- [x] Admin can add a subscriber with email + optional name.
+- [x] Admin can update a subscriber's name/preference.
+- [x] Admin can delete a subscriber (shows confirmation).
+- [x] Unsubscribed subscribers are hidden by default (toggle to show).
+- [x] All forms validate email format and show errors.
+- [x] All interactions work on mobile (touch-friendly, no horizontal scroll) — verified on a real iPhone (Safari + Chrome).
+- [x] Subscriber routes are unreachable without the admin secret (§4.1).
 
 ---
 
@@ -650,11 +703,17 @@ async function sendEmails(email_server_id: string, subscribers: Subscriber[]) {
 
 ## 9. Getting Started (First Session — M0)
 
+> **Update (M1):** Render deployment happened during M1, not M7 as originally
+> planned here — each milestone now gets deployed and phone-tested as it's
+> built, rather than saving the first deploy for the very end. M7 is now
+> mostly final polish rather than "first time this has run outside a laptop."
+> Free tier is in use for now (see the M1 session notes on the tier decision).
+
 1. **Accounts needed:**
    - GitHub (repo)
    - Supabase (database)
    - Mailgun (email delivery) — can defer to M3
-   - Render (deployment) — can defer to M7
+   - Render (deployment) — now set up as of M1, not deferred to M7
 
 2. **M0 Setup:**
    - Create GitHub repo.
@@ -718,6 +777,23 @@ async function sendEmails(email_server_id: string, subscribers: Subscriber[]) {
 
 - `/api/sender/send` must complete within ~5 seconds for up to 1000 subscribers (NFR-1.1). This rules out a naive sequential per-subscriber loop — implement via Mailgun batch sending or bounded concurrency (§7.3).
 - R2 may move this to a background job (Render Background Worker) so the request returns immediately and the send runs in the background, for arbitrarily large lists.
+
+### Known Browser Quirk: Chrome on iOS can intermittently fail to load a page
+
+- During M1 phone testing, tapping "Edit" in the subscriber list occasionally
+  produced Chrome's native "This page couldn't load" error on iPhone — but
+  only in regular (non-Incognito) Chrome for iOS, never in Safari, Incognito
+  Chrome, or desktop Chrome (confirmed via a live automated reproduction with
+  full console/network logging: zero errors, zero failed requests, all
+  same-origin).
+- Root cause: a Chrome-for-iOS background feature (predictive preloading
+  and/or its page-assist features) interfering with the page — confirmed by
+  the bug disappearing in Incognito, which disables those features. Nothing
+  in the app is doing this; there's no cross-site traffic and no failed
+  requests anywhere in the trace.
+- Not something the app can detect or work around from inside the page. If it
+  resurfaces and bothers a real user, the workaround is Incognito mode or
+  Safari; otherwise no action needed.
 
 ### No Engagement Analytics in R1
 
