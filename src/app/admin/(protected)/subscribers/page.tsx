@@ -134,38 +134,37 @@ export default function SubscribersPage() {
         <p className="text-sm text-gray-500">{total} total</p>
       </div>
 
-      <form
-        onSubmit={handleAdd}
-        className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4 sm:flex-row sm:items-start"
-      >
-        <div className="flex-1 space-y-1">
-          <input
-            type="email"
-            required
-            value={newEmail}
-            onChange={(e) => setNewEmail(e.target.value)}
-            placeholder="Email address"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none"
-          />
-        </div>
-        <div className="flex-1 space-y-1">
-          <input
-            type="text"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="Name (optional)"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={adding || !newEmail}
-          className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-        >
-          {adding ? "Adding..." : "Add Subscriber"}
-        </button>
-        {addError && <p className="w-full text-sm text-red-600">{addError}</p>}
-      </form>
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <form onSubmit={handleAdd} className="flex flex-col gap-3 sm:flex-row sm:items-start">
+          <div className="flex-1 space-y-1">
+            <input
+              type="email"
+              required
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              placeholder="Email address"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none"
+            />
+          </div>
+          <div className="flex-1 space-y-1">
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Name (optional)"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={adding || !newEmail}
+            className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {adding ? "Adding..." : "Add Subscriber"}
+          </button>
+        </form>
+        {addError && <p className="mt-2 text-sm text-red-600">{addError}</p>}
+      </div>
 
       <label className="flex items-center gap-2 text-sm text-gray-700">
         <input
