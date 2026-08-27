@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 // they live under a protected prefix below.
 const PUBLIC_ADMIN_PATHS = ["/admin/login", "/api/admin/login"];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (PUBLIC_ADMIN_PATHS.includes(pathname)) {
