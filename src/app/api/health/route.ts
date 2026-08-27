@@ -5,9 +5,7 @@ import { supabase } from "@/lib/supabase";
 // schema exists. Not part of the permanent API surface - later milestones
 // add the real /api/manager, /api/builder, /api/sender routes.
 export async function GET() {
-  const { count, error } = await supabase
-    .from("email_servers")
-    .select("*", { count: "exact", head: true });
+  const { data, error } = await supabase.from("email_servers").select("id").limit(1);
 
   if (error) {
     return NextResponse.json(
@@ -16,5 +14,5 @@ export async function GET() {
     );
   }
 
-  return NextResponse.json({ database: "connected", email_servers_count: count });
+  return NextResponse.json({ database: "connected", email_servers_count: data.length });
 }
