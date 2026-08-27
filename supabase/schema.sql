@@ -32,6 +32,10 @@ create table subscribers (
 create index idx_subscribers_email_server_id on subscribers (email_server_id);
 create index idx_subscribers_email on subscribers (email);
 create index idx_subscribers_unsubscribed on subscribers (unsubscribed);
+-- Prevents the same email being added twice to the same newsletter, and is
+-- what turns a duplicate signup into a clean 409 error instead of a silent
+-- second row.
+alter table subscribers add constraint subscribers_email_server_id_email_key unique (email_server_id, email);
 
 -- Email_Sections: template sections
 create table email_sections (
