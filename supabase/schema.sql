@@ -63,3 +63,14 @@ create table send_history (
 );
 create index idx_send_history_email_server_id on send_history (email_server_id);
 create index idx_send_history_sent_date on send_history (sent_date);
+
+-- Grants: tables created via the SQL Editor don't automatically pick up the
+-- default privileges Supabase's Table Editor UI would set. The app connects
+-- as service_role (see src/lib/supabase.ts), so it needs explicit access.
+-- No RLS is enabled on these tables (V1 has no per-user data - see §4.1/§5.1
+-- in docs/V1_BUILD-SPEC.MD), so a grant is the only gate here.
+grant usage on schema public to service_role;
+grant select, insert, update, delete on public.email_servers to service_role;
+grant select, insert, update, delete on public.subscribers to service_role;
+grant select, insert, update, delete on public.email_sections to service_role;
+grant select, insert, update, delete on public.send_history to service_role;
