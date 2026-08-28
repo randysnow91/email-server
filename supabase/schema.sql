@@ -52,6 +52,9 @@ create table email_sections (
 );
 create index idx_email_sections_email_server_id on email_sections (email_server_id);
 create index idx_email_sections_section_type on email_sections (section_type);
+-- One row per section type per newsletter - lets "Save" be a clean
+-- create-or-update (upsert) instead of risking duplicate rows.
+alter table email_sections add constraint email_sections_email_server_id_section_type_key unique (email_server_id, section_type);
 
 -- Send_History: log of every send
 create table send_history (
