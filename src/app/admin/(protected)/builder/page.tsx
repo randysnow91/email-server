@@ -346,7 +346,15 @@ export default function BuilderPage() {
               </p>
             </div>
             <iframe
-              sandbox=""
+              // No scripts, no same-origin access, no top-navigation - the
+              // admin's pasted content can't do anything to this app. But an
+              // empty sandbox also blocks target="_blank" links entirely
+              // (they count as "popups"), so allow-popups is required for
+              // the Insert Link feature to actually work. allow-popups-to-
+              // escape-sandbox ensures the opened link is a normal, fully
+              // functional tab (e.g. a real donation form), not itself
+              // sandboxed.
+              sandbox="allow-popups allow-popups-to-escape-sandbox"
               srcDoc={previewDoc}
               title="Email preview"
               className="h-[500px] w-full border-0"
