@@ -1,6 +1,6 @@
 # Claude Code Build Spec — Email Server
 
-**Status:** v1.2 — M0 and M1 complete, READY FOR M2  
+**Status:** v1.3 — M0, M1, and M2 complete, READY FOR M3  
 **Derived from:** `Email_Server_R1_SRD.md` (the requirements document — read it first) + planning review (2026-08-27)  
 **Audience:** Claude Code (the coding agent) + the builder (product owner)
 
@@ -9,6 +9,7 @@
 | v1.0 | 2026-08-26 | Initial spec. All milestones M0–M7 scoped and acceptance criteria defined. |
 | v1.1 | 2026-08-27 | Planning review with Claude Code. Rescoped M5 to match the SRD's R1/R3 boundary (dropped self-service unsubscribe/preferences pages). Replaced the V1 Supabase Auth requirement with a lightweight admin-access gate (SRD assumes a trusted single admin, not a user system). Added a `name` field to subscribers (required by FR-3.2, missing from the original schema). Added a test-send capability (called for in SRD §9.2/§8.2, missing from v1.0). Flagged the sequential per-subscriber send loop as insufficient for NFR-1.1. Milestones and acceptance criteria are now the binding contract; schema and code samples throughout are illustrative, not prescriptive — see the note below. |
 | v1.2 | 2026-08-27 | M0 and M1 built, verified locally, deployed to Render, and tested on a real phone (see §8 checkboxes). Documented decisions made during the build: default-newsletter auto-provisioning (§4.7), the temporary root-path redirect (§4.8), the `(protected)` admin route group convention (§4.9), and a Supabase query gotcha for future milestones (§7.5). Render deployment moved earlier than M7 — see §9. |
+| v1.3 | 2026-08-30 | M2 built, verified locally, deployed to Render, and tested on a real phone (see §8 checkboxes). Documented the section-styling/Insert Link approach (§4.10) and an iframe sandbox gotcha for any future preview/embedded content (§7.6). Two real bugs found during phone testing and fixed: sections rendering as one undifferentiated block of text (missing per-section styling and line-break handling), and preview links being unclickable (sandboxed iframe blocking `target="_blank"` without `allow-popups`). |
 
 > **How to use this document.**
 > The SRD says *what* and *why*. This spec says *how, with what, and in what order*.
@@ -214,6 +215,29 @@ authenticated pages.
 **Why:** Keeps the "logged in vs. not" boundary visible in the file structure
 itself. Future milestones (M2's builder, M4's send page) should add new pages
 under this same `(protected)` group rather than directly under `admin/`.
+
+### 4.10 Section content: plain textarea + inline per-type styling + Insert Link helper
+
+**Decision:** Sections stay plain textareas (no rich-text editor library — see
+§2's original reasoning), but `composeEmail()` (`src/lib/composeEmail.ts`) wraps
+each section's content in a `<div>` with inline styles specific to that
+section type (Title as a heading, Advertisement in a bordered/tinted box,
+Editor's Section as an italic pull-quote, Footer small/muted, etc.), plus
+`white-space:pre-wrap` so typed line breaks render as line breaks. The builder
+page adds a small **"+ Insert Link"** helper per section (all except Subject,
+which is plain text in real emails) — a two-field inline form (link text +
+URL) that generates the `<a href>` HTML and inserts it at the cursor, so
+adding a link never requires hand-writing HTML.
+
+**Why:** Real usage (Randy's own content) surfaced two problems immediately:
+sections with no visual separation read as one undifferentiated block of
+text, and a bare URL pasted into the Advertisement section was just inert
+text, not a link. A full rich-text editor would solve both but reopens the
+"new dependency" trade-off §2 deliberately avoided; styling the composed
+output plus one small link-insertion helper solves the actual reported
+problems without that cost. Since `composeEmail()` is the same function M3's
+send will use, this isn't a preview-only cosmetic fix — it's what the real
+sent email looks like too.
 
 ---
 
@@ -503,6 +527,20 @@ HTTP `HEAD` request) hung/misbehaved against this project and made
 Future milestones needing a count (e.g. M2/M6 dashboards) should use the
 non-`head` form.
 
+### 7.6 Gotcha: `<iframe sandbox="">` blocks `target="_blank"` links
+
+M2's email preview renders in a sandboxed iframe (`src/app/admin/(protected)/builder/page.tsx`)
+so the admin's pasted HTML/scripts can't touch the app. An empty `sandbox=""`
+blocks *everything*, including `target="_blank"` links (the HTML sandbox spec
+treats them as "popups"). The link rendered correctly and looked right, but
+clicking it silently did nothing — only caught during real phone testing,
+since the fix was never actually click-tested beforehand, only confirmed via
+the API. Fix: `sandbox="allow-popups allow-popups-to-escape-sandbox"` — the
+first re-enables the link, the second ensures the opened tab is a normal,
+fully-functional page rather than itself sandboxed (needed since the
+destination is someone else's real site). Any future embedded/sandboxed
+preview content should allow for this from the start if it contains links.
+
 ---
 
 ## 8. Milestones & Acceptance Criteria
@@ -570,14 +608,14 @@ non-`head` form.
 7. Validate that main_body exists before allowing send (enforced in M3).
 
 **Acceptance Criteria:**
-- [ ] Admin can view all sections (subject, header, title, about, main_body, ad, editor, footer).
-- [ ] Admin can edit each section's content (rich text or HTML).
-- [ ] Live preview updates as user types (no lag).
-- [ ] Admin can save changes to a section.
-- [ ] Admin can delete a section (shows confirmation; next send will skip it).
-- [ ] Email preview correctly combines sections in order.
-- [ ] Empty sections are skipped (don't break the email layout).
-- [ ] Editor is usable on mobile (section list does not require horizontal scroll).
+- [x] Admin can view all sections (subject, header, title, about, main_body, ad, editor, footer).
+- [x] Admin can edit each section's content (rich text or HTML) — plain textarea + Insert Link helper (§4.10), not a rich-text library.
+- [x] Live preview updates as user types (no lag) — client-side composition, no network round-trip.
+- [x] Admin can save changes to a section.
+- [x] Admin can delete a section (shows confirmation; next send will skip it).
+- [x] Email preview correctly combines sections in order.
+- [x] Empty sections are skipped (don't break the email layout).
+- [x] Editor is usable on mobile (section list does not require horizontal scroll) — verified on a real iPhone (Safari + Chrome).
 
 ---
 
@@ -812,4 +850,4 @@ non-`head` form.
 
 ---
 
-*End of Build Spec v1.1*
+*End of Build Spec v1.3*
