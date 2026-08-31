@@ -1,6 +1,6 @@
 # Claude Code Build Spec — Email Server
 
-**Status:** v1.3 — M0, M1, and M2 complete, READY FOR M3  
+**Status:** v1.4 — M0, M1, M2, and M3 complete, READY FOR M4  
 **Derived from:** `Email_Server_R1_SRD.md` (the requirements document — read it first) + planning review (2026-08-27)  
 **Audience:** Claude Code (the coding agent) + the builder (product owner)
 
@@ -10,6 +10,7 @@
 | v1.1 | 2026-08-27 | Planning review with Claude Code. Rescoped M5 to match the SRD's R1/R3 boundary (dropped self-service unsubscribe/preferences pages). Replaced the V1 Supabase Auth requirement with a lightweight admin-access gate (SRD assumes a trusted single admin, not a user system). Added a `name` field to subscribers (required by FR-3.2, missing from the original schema). Added a test-send capability (called for in SRD §9.2/§8.2, missing from v1.0). Flagged the sequential per-subscriber send loop as insufficient for NFR-1.1. Milestones and acceptance criteria are now the binding contract; schema and code samples throughout are illustrative, not prescriptive — see the note below. |
 | v1.2 | 2026-08-27 | M0 and M1 built, verified locally, deployed to Render, and tested on a real phone (see §8 checkboxes). Documented decisions made during the build: default-newsletter auto-provisioning (§4.7), the temporary root-path redirect (§4.8), the `(protected)` admin route group convention (§4.9), and a Supabase query gotcha for future milestones (§7.5). Render deployment moved earlier than M7 — see §9. |
 | v1.3 | 2026-08-30 | M2 built, verified locally, deployed to Render, and tested on a real phone (see §8 checkboxes). Documented the section-styling/Insert Link approach (§4.10) and an iframe sandbox gotcha for any future preview/embedded content (§7.6). Two real bugs found during phone testing and fixed: sections rendering as one undifferentiated block of text (missing per-section styling and line-break handling), and preview links being unclickable (sandboxed iframe blocking `target="_blank"` without `allow-popups`). |
+| v1.4 | 2026-08-31 | M3 built and verified against live Mailgun (real inbox delivery, not just API acceptance), including a real Apple/iCloud address and the deployed Render instance. Documented the Mailgun integration approach (§4.11) and a real deliverability gotcha: a sending domain needs an MX record too, not just SPF/DKIM/DMARC (§7.7) — a real bounce during testing, not a hypothetical. Added image support (Supabase Storage + an Insert Image helper) to M7 as new scope, to be built first in that milestone, ahead of M7's full-workflow retest. |
 
 > **How to use this document.**
 > The SRD says *what* and *why*. This spec says *how, with what, and in what order*.
@@ -238,6 +239,23 @@ output plus one small link-insertion helper solves the actual reported
 problems without that cost. Since `composeEmail()` is the same function M3's
 send will use, this isn't a preview-only cosmetic fix — it's what the real
 sent email looks like too.
+
+### 4.11 Mailgun: direct REST calls, batch sending, greeting via recipient-variables
+
+**Decision:** `src/lib/mailgun.ts` calls Mailgun's REST API directly via
+`fetch()` rather than adding their SDK — one endpoint, not worth a new
+dependency. Sends go through Mailgun's batch-sending feature (a comma-
+separated `to` list plus `recipient-variables` JSON in one call, chunked at
+1,000 recipients with concurrent requests for anything larger) rather than
+looping per-subscriber. Personalization ("Hi {name},") is layered on top of
+`composeEmail()`'s output via `withGreeting()` at send time, not baked into
+the shared composer, since the builder's live preview has no subscriber to
+personalize for.
+
+**Why:** Directly satisfies both NFR-1.1 (performance) and the privacy
+requirement (§7.1) in one mechanism, exactly as §7.3 originally recommended.
+Keeping personalization out of `composeEmail()` preserves its "same output
+for everyone" contract that the live preview depends on.
 
 ---
 
@@ -541,6 +559,27 @@ fully-functional page rather than itself sandboxed (needed since the
 destination is someone else's real site). Any future embedded/sandboxed
 preview content should allow for this from the start if it contains links.
 
+### 7.7 Gotcha: a Mailgun sending domain needs an MX record too, even though it only sends
+
+M3 hit this during real-device testing: a test-send to an `@me.com` (Apple/
+iCloud) address bounced with `Sender address rejected: Domain not found`,
+even though SPF, DKIM, and DMARC were all correctly verified for
+`mg.randy-snow.com`. Root cause: the domain had no MX record. Apple's mail
+servers (and other strict providers) verify a *sending* domain can also
+*receive* mail — including bounce notifications — as an anti-spam signal,
+before trusting messages from it. A domain with SPF/DKIM/DMARC but no MX
+looks incomplete to them. This was originally (incorrectly) assumed
+unnecessary for a send-only subdomain — SPF/DKIM/DMARC alone were treated as
+sufficient. Fix: add MX records for the sending subdomain pointing to
+Mailgun's mail servers (Mailgun's own domain settings page lists the exact
+values to use — check there rather than trusting a hostname written here, in
+keeping with this doc's "re-verify moving details" note). Delivery to
+mailinator.com worked throughout, since it doesn't perform this kind of
+strict validation — that made the gap easy to miss until testing against a
+real, strict provider. **Any Mailgun sending domain in this project should
+get the full SPF + DKIM + DMARC + MX set from day one**, not just the first
+three.
+
 ---
 
 ## 8. Milestones & Acceptance Criteria
@@ -633,16 +672,16 @@ preview content should allow for this from the start if it contains links.
 7. Create `/api/sender/send-history` route.
 
 **Acceptance Criteria:**
-- [ ] `/api/sender/send` successfully sends email to 5+ test subscribers.
-- [ ] Each email contains the correct subject, header, body, footer, and other sections.
-- [ ] Send implementation is designed to meet NFR-1.1 (5 seconds for up to 1000 subscribers) — batched or concurrent, not fully sequential.
-- [ ] `/api/sender/test-send` delivers a single copy to the admin's own address without affecting subscriber send counts.
-- [ ] Mailgun API key is not exposed in logs or frontend code (stored in env var).
-- [ ] Errors (invalid email, API failures) are logged with details.
-- [ ] Send history is recorded (sent_date, recipient_count, success_count, failed_count).
-- [ ] API returns a summary: {success_count, failed_count, errors}.
-- [ ] Unsubscribed subscribers are NOT sent emails.
-- [ ] All emails are sent from the configured from_address.
+- [x] `/api/sender/send` successfully sends email to 5+ test subscribers — verified against live Mailgun with real inbox delivery (mailinator + a real Apple/iCloud address), not just API acceptance.
+- [x] Each email contains the correct subject, header, body, footer, and other sections.
+- [x] Send implementation is designed to meet NFR-1.1 (5 seconds for up to 1000 subscribers) — batched (§4.11); measured at 356ms for 5 recipients in one batch call.
+- [x] `/api/sender/test-send` delivers a single copy to the admin's own address without affecting subscriber send counts.
+- [x] Mailgun API key is not exposed in logs or frontend code (stored in env var) — confirmed absent from server logs.
+- [x] Errors (invalid email, API failures) are logged with details.
+- [x] Send history is recorded (sent_date, recipient_count, success_count, failed_count).
+- [x] API returns a summary: {success_count, failed_count, errors}.
+- [x] Unsubscribed subscribers are NOT sent emails — verified with a deliberately-unsubscribed test row correctly excluded from a real send.
+- [x] All emails are sent from the configured from_address.
 
 ---
 
@@ -714,23 +753,41 @@ preview content should allow for this from the start if it contains links.
 
 ---
 
-### M7: Testing, Deployment & Polish
+### M7: Image Support, Testing, Deployment & Polish
 
-**Goals:** Deploy to Render, verify end-to-end, polish UI.
+**Goals:** Add image upload to the Email Builder, then verify the full V1
+workflow end-to-end (now including an image) and polish.
+
+> Render setup/deploy (the original tasks 1-3 here) already happened during
+> M1 — see §9's update note. M7 is real feature work (image support) plus
+> final polish and full-workflow verification, not "first deploy."
 
 **Tasks:**
-1. Set up Render account and connect GitHub repo.
-2. Configure Render environment variables (Supabase keys, Mailgun key, `ADMIN_ACCESS_SECRET`, app URL).
-3. Deploy to Render (web service, Node.js).
-4. Test full workflow on live site (enter admin secret → dashboard → compose → test send → send → confirm subscriber received it).
-5. Fix any bugs discovered in live testing.
-6. Add form validation polish (clear error messages, disabled states).
-7. Test on real mobile device (not just dev tools).
-8. Document any remaining known issues.
+1. **Image support in the Email Builder** (do this first, before the
+   full-workflow retest below):
+   - Add a Supabase Storage bucket for uploaded images.
+   - Add an "Insert Image" helper per section, mirroring the Insert Link
+     helper from M2 (§4.10) — upload a file, get back a URL, insert the
+     resulting `<img>` tag at the cursor. No hand-written HTML required.
+   - In the meantime, admins can already embed an image by hand-pasting
+     `<img src="...">` pointing at any externally-hosted image (e.g. a
+     WordPress media library URL) — the section content is raw HTML
+     already, so this isn't blocked, just not yet convenient.
+2. Test full workflow on live site (enter admin secret → dashboard →
+   compose an email that includes an image → test send → send → confirm
+   subscriber received it, image included).
+3. Fix any bugs discovered in live testing.
+4. Add form validation polish (clear error messages, disabled states).
+5. Test on real mobile device (not just dev tools).
+6. Document any remaining known issues.
 
 **Acceptance Criteria:**
-- [ ] App is deployed and accessible at a public URL (e.g., https://email-server-r1.render.com).
-- [ ] Full workflow works end-to-end on live site (subscribe → compose → test send → send).
+- [ ] Admin can upload an image and insert it into a section without
+      hand-writing HTML.
+- [ ] Sent emails correctly display the embedded image.
+- [ ] App is deployed and accessible at a public URL.
+- [ ] Full workflow works end-to-end on live site (subscribe → compose with
+      an image → test send → send).
 - [ ] Mailgun successfully delivers emails to real inboxes.
 - [ ] No unhandled errors in browser console or Render logs.
 - [ ] Tested on a real mobile device (phone or tablet).
@@ -850,4 +907,4 @@ preview content should allow for this from the start if it contains links.
 
 ---
 
-*End of Build Spec v1.3*
+*End of Build Spec v1.4*
