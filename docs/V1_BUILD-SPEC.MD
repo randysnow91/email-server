@@ -1,6 +1,6 @@
 # Claude Code Build Spec — Email Server
 
-**Status:** v1.4 — M0, M1, M2, and M3 complete, READY FOR M4  
+**Status:** v1.5 — M0, M1, M2, M3, and M4 complete, READY FOR M5  
 **Derived from:** `Email_Server_R1_SRD.md` (the requirements document — read it first) + planning review (2026-08-27)  
 **Audience:** Claude Code (the coding agent) + the builder (product owner)
 
@@ -11,6 +11,7 @@
 | v1.2 | 2026-08-27 | M0 and M1 built, verified locally, deployed to Render, and tested on a real phone (see §8 checkboxes). Documented decisions made during the build: default-newsletter auto-provisioning (§4.7), the temporary root-path redirect (§4.8), the `(protected)` admin route group convention (§4.9), and a Supabase query gotcha for future milestones (§7.5). Render deployment moved earlier than M7 — see §9. |
 | v1.3 | 2026-08-30 | M2 built, verified locally, deployed to Render, and tested on a real phone (see §8 checkboxes). Documented the section-styling/Insert Link approach (§4.10) and an iframe sandbox gotcha for any future preview/embedded content (§7.6). Two real bugs found during phone testing and fixed: sections rendering as one undifferentiated block of text (missing per-section styling and line-break handling), and preview links being unclickable (sandboxed iframe blocking `target="_blank"` without `allow-popups`). |
 | v1.4 | 2026-08-31 | M3 built and verified against live Mailgun (real inbox delivery, not just API acceptance), including a real Apple/iCloud address and the deployed Render instance. Documented the Mailgun integration approach (§4.11) and a real deliverability gotcha: a sending domain needs an MX record too, not just SPF/DKIM/DMARC (§7.7) — a real bounce during testing, not a hypothetical. Added image support (Supabase Storage + an Insert Image helper) to M7 as new scope, to be built first in that milestone, ahead of M7's full-workflow retest. |
+| v1.5 | 2026-09-01 | M4 built, verified locally, deployed to Render, and phone-tested. Almost pure front-end work — M3 already shipped and tested the entire sender backend, so M4 added the `/admin/send` workflow page, wired send history into the dashboard, and added navigation. Documented the send-workflow UI approach (§4.12): in-page confirmation panel instead of a native `confirm()` dialog, client-side preview reusing `composeEmail()`, and the dashboard as the one server-rendered admin page (forced dynamic). No new API routes, no schema changes, no new gotchas. |
 
 > **How to use this document.**
 > The SRD says *what* and *why*. This spec says *how, with what, and in what order*.
@@ -256,6 +257,43 @@ personalize for.
 requirement (§7.1) in one mechanism, exactly as §7.3 originally recommended.
 Keeping personalization out of `composeEmail()` preserves its "same output
 for everyone" contract that the live preview depends on.
+
+### 4.12 M4 send workflow: dedicated `/admin/send` page, in-page confirm, reused composer
+
+**Decision:** The complete admin send workflow lives on one new page,
+`src/app/admin/(protected)/send/page.tsx`:
+
+- **Preview** is composed in the browser with the shared `composeEmail()`
+  (§4.10) — same as the Builder's live preview — rendered in the same
+  sandboxed iframe (§7.6). No `/api/builder/preview` round-trip.
+- **Recipient count** reuses `GET /api/manager/subscribers?limit=1` and
+  reads `total` (the exact non-unsubscribed count) rather than adding a
+  count endpoint.
+- **Confirmation for the real send is an in-page panel**, not a native
+  `window.confirm()` dialog (the Builder's Delete still uses `confirm()`;
+  the send is higher-stakes and the panel reads better on mobile).
+- **Main Body guard** is enforced client-side too (send buttons disable
+  with a warning when it's empty), mirroring the server-side
+  `MissingMainBodyError` (§7.2) rather than relying only on the API 400.
+- **Test-send address** is remembered in `localStorage`
+  (`emailserver.testSendAddress`), not a new env var.
+- **Send history** shows on both the send page (last 15, full table) and
+  the dashboard (last 5), with test sends badged distinctly from real
+  sends.
+
+The **dashboard** (`src/app/admin/(protected)/page.tsx`) became the one
+server-rendered admin page — it reads Supabase directly (same pattern as
+the API routes, no self-fetch/cookie dance) and is marked
+`export const dynamic = "force-dynamic"` so counts and recent sends are
+never baked in at build time. Every other admin page is a client
+component with a static shell.
+
+**Why:** M3 had already built and live-tested the entire sender backend
+(`/api/sender/send`, `/test-send`, `/send-history`, `composeForSend()`,
+Mailgun batch sending). M4's acceptance criteria are all UI/workflow, so
+M4 added no API routes and no schema changes — just the page, the
+history views, and navigation (nav "Send" link + a "Go to Send" button
+on the Builder, satisfying "navigate from Email Builder to a Send page").
 
 ---
 
@@ -698,14 +736,14 @@ three.
 6. Test full workflow on mobile and desktop.
 
 **Acceptance Criteria:**
-- [ ] Admin can navigate from Email Builder to a "Send" page.
-- [ ] Send page shows email preview and recipient count.
-- [ ] Admin can send a test copy to themselves before the real send.
-- [ ] Admin can click "Confirm Send" to trigger `/api/sender/send`.
-- [ ] After send, admin sees results (success_count, failed_count).
-- [ ] Any failed sends show error details.
-- [ ] Send history is viewable on the dashboard, with test sends distinguishable from real sends.
-- [ ] Workflow is clear and mobile-friendly (no confusing navigation).
+- [x] Admin can navigate from Email Builder to a "Send" page — nav "Send" link + a "Go to Send →" button on the Builder.
+- [x] Send page shows email preview and recipient count — client-composed preview (§4.12), exact non-unsubscribed count.
+- [x] Admin can send a test copy to themselves before the real send — address remembered in localStorage; logs as a test send.
+- [x] Admin can click "Confirm Send" to trigger `/api/sender/send` — via an in-page confirmation panel, not a native dialog (§4.12).
+- [x] After send, admin sees results (success_count, failed_count).
+- [x] Any failed sends show error details — per-error bulleted list in the result summary.
+- [x] Send history is viewable on the dashboard, with test sends distinguishable from real sends — last 5 on the dashboard, last 15 on the send page; "Test"/"Send" badges.
+- [x] Workflow is clear and mobile-friendly (no confusing navigation) — verified on a real phone against the Render deployment.
 
 ---
 
