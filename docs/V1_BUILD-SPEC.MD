@@ -1,6 +1,6 @@
 # Claude Code Build Spec — Email Server
 
-**Status:** v1.6 — M0, M1, M2, M3, M4, and M5 complete, READY FOR M6  
+**Status:** v1.7 — M0, M1, M2, M3, M4, M5, and M6 complete, READY FOR M7  
 **Derived from:** `Email_Server_R1_SRD.md` (the requirements document — read it first) + planning review (2026-08-27)  
 **Audience:** Claude Code (the coding agent) + the builder (product owner)
 
@@ -13,6 +13,7 @@
 | v1.4 | 2026-08-31 | M3 built and verified against live Mailgun (real inbox delivery, not just API acceptance), including a real Apple/iCloud address and the deployed Render instance. Documented the Mailgun integration approach (§4.11) and a real deliverability gotcha: a sending domain needs an MX record too, not just SPF/DKIM/DMARC (§7.7) — a real bounce during testing, not a hypothetical. Added image support (Supabase Storage + an Insert Image helper) to M7 as new scope, to be built first in that milestone, ahead of M7's full-workflow retest. |
 | v1.5 | 2026-09-01 | M4 built, verified locally, deployed to Render, and phone-tested. Almost pure front-end work — M3 already shipped and tested the entire sender backend, so M4 added the `/admin/send` workflow page, wired send history into the dashboard, and added navigation. Documented the send-workflow UI approach (§4.12): in-page confirmation panel instead of a native `confirm()` dialog, client-side preview reusing `composeEmail()`, and the dashboard as the one server-rendered admin page (forced dynamic). No new API routes, no schema changes, no new gotchas. |
 | v1.6 | 2026-09-01 | M5 built, verified locally, deployed to Render, and phone-tested. **Scope change:** self-service unsubscribe was pulled forward from R3 into M5 (preferences stays in R3) — the data model already had `unsubscribed`, real sends were going out with no opt-out link (a compliance and deliverability gap), and both unsubscribe and preferences need the same token mechanism, so building it once now makes preferences a cheap R3 add. §4.4 rewritten to reflect this; new §4.13 documents the M5 approach (a `(public)` route group with its own chrome, click-to-confirm unsubscribe, per-recipient footer link via a Mailgun variable). Schema change: `subscribers.unsubscribe_token` (migration `001_m5_unsubscribe_token.sql`). One UX fix found in testing: the M1 "Show unsubscribed" checkbox was additive and made a re-subscribed person look duplicated — replaced with an Active / Unsubscribed / All filter. |
+| v1.7 | 2026-09-01 | M6 built, verified locally, deployed to Render, and phone-tested. No schema changes — `email_servers` already existed. New §4.14 documents the M6 approach: the active newsletter is an `email_server_id` cookie (`getActiveEmailServerId()`), the top nav is the single navigation on every admin screen (the dashboard's duplicate quick-link buttons and the Builder's "Go to Send" button were both removed after review), the switcher does a full page reload so client-rendered pages re-scope, and newsletters can be listed/created/switched but not edited/deleted/deactivated in V1. New routes: `GET/POST /api/manager/accounts`, `POST /api/manager/accounts/select`. §4.7 and §4.8 closed out. |
 
 > **How to use this document.**
 > The SRD says *what* and *why*. This spec says *how, with what, and in what order*.
@@ -81,7 +82,7 @@ Server routes (Render)
   │
   ├─ Email Manager API (admin-gated)
   │  └─ GET/POST/PUT/DELETE /api/manager/subscribers
-  │  └─ GET /api/manager/accounts
+  │  └─ GET/POST /api/manager/accounts, POST .../accounts/select  [M6, §4.14]
   │
   ├─ Email Builder API (admin-gated)
   │  └─ GET/POST/PUT/DELETE /api/builder/sections
@@ -207,29 +208,28 @@ admin's own address, separate from the full-list send.
 **Why:** The SRD's admin workflow (§9.2, step 6) and UI spec (§8.2, "Save and Test
 Send buttons") both call for this; the v1.0 build spec omitted it.
 
-### 4.7 Default `email_server` is auto-provisioned, not created via UI
+### 4.7 Default `email_server` is auto-provisioned; M6 added the UI on top
 
 **Decision:** M1 needed subscribers to belong to *some* `email_server`, but no
-account-creation UI exists until M6. Rather than block M1 on building one, the
-server auto-creates a single default row (`"AI PM Perspective"`, per the SRD's
-stated R1 use case) the first time it's needed, cached in-process
-(`src/lib/emailServer.ts`). There is no setup screen for this in M1 — it just
-exists.
+account-creation UI existed yet. The server auto-creates a single default row
+(`"AI PM Perspective"`, per the SRD's stated R1 use case) the first time it's
+needed, its id cached in-process (`src/lib/emailServer.ts`).
 
-**Why:** Avoids pulling M6 scope forward just to unblock M1. M6 replaces this
-with a real account-switcher UI; the underlying `email_server_id` data model
-doesn't change.
+**M6 update:** the auto-provisioned row is now just the *first* newsletter.
+M6 added `/admin/newsletters` (list + create) and a nav switcher, plus
+`getActiveEmailServerId()` — the `email_server_id` data model didn't change,
+exactly as planned. The oldest row stays the "default/primary" (what
+`getDefaultEmailServerId()` and the public `/subscribe` page use). See §4.14.
 
-### 4.8 Root path (`/`) redirects to `/admin` — temporary
+### 4.8 Root path (`/`) redirects to `/subscribe` (settled in M5)
 
-**Decision:** `src/app/page.tsx` redirects to `/admin`. Nothing real lives at
-root yet.
+**Decision:** `src/app/page.tsx` redirects to `/subscribe` — the public front
+door. Admins bookmark `/admin`.
 
-**Why:** Without this, the public Render URL showed the unedited
-create-next-app template ("To get started, edit page.tsx") — confusing on a
-deployed link. M5 (public `/subscribe`) or M6 (real dashboard/landing page)
-should revisit what belongs at `/`; this redirect is a placeholder, not a
-final decision.
+**History:** through v1.4 this redirected to `/admin` as a placeholder (it kept
+the deployed Render URL from showing the create-next-app template). M5 made
+`/subscribe` real and this became its permanent target (§4.13). M6's dashboard
+is an admin-only page, so `/` was *not* pointed there.
 
 ### 4.9 Admin pages are grouped under `/admin/(protected)/`
 
@@ -366,6 +366,42 @@ All view.
 build time, so it must be set correctly in Render's env **before** the build
 for unsubscribe links in sent email to point at the live site.
 
+### 4.14 M6 dashboard: active-newsletter cookie, one navigation, list/create newsletters only
+
+**Decision:**
+
+- **The active newsletter is a cookie.** `getActiveEmailServerId()`
+  (`src/lib/emailServer.ts`) reads an `email_server_id` cookie, checks it still
+  points at a real row, and falls back to `getDefaultEmailServerId()` (the
+  oldest row). Every **admin** API route and admin server component uses it.
+  The **public** `/subscribe` and `/unsubscribe` routes deliberately stay on
+  the default/primary newsletter — V1's real use is one newsletter, the SRD's
+  subscriber flow never picks one, and per-newsletter public signup links
+  (`/subscribe?id=…`) are future work. `POST /api/manager/accounts/select`
+  sets the cookie; creating a newsletter switches to it.
+- **The top nav is the only navigation.** Every admin screen shows the same
+  menu — Dashboard · Subscribers · Builder · Send · History · Newsletters —
+  plus the newsletter switcher and Log out. The dashboard is a read-only
+  overview (newsletter name, stat tiles, recent sends); its earlier
+  quick-link button row **and** the Builder's "Go to Send →" button were
+  both removed after review — they duplicated the nav and only appeared on
+  one screen each, which read as a second, inconsistent navigation.
+- **Switching newsletters does a full page reload** (`window.location.reload()`),
+  not `router.refresh()`. A soft refresh only re-renders server components;
+  the client-rendered pages (Subscribers, Builder, Send, History) would keep
+  showing the previous newsletter's data. Switching is rare, so the reload
+  cost is fine.
+- **Newsletters can be listed, created, and switched — not edited, deleted, or
+  deactivated.** Activation is R4 (FR-1.10). Edit/delete aren't in any R1
+  requirement, and deleting a newsletter cascades to all its subscribers,
+  sections, and send history — too sharp for a single-operator V1.
+
+**Why this shape:** M6's acceptance criteria are a dashboard + consistent
+navigation + a working switcher "if more than one exists." The switcher needs
+a way to reach >1 newsletter to be usable at all, so a minimal create form
+(name + description) is in scope; everything past that isn't. No schema change
+— `email_servers` already had `name`, `description`, `created_at`.
+
 ---
 
 ## 5. Data Model & Database Schema
@@ -497,9 +533,24 @@ the underlying capability is there.
 - Remove subscriber (admin only)
 - Returns: {success: true}
 
-**GET /api/manager/accounts/:id**
-- Fetch account metadata
-- Returns: {id, name, description, created_at, active}
+**GET /api/manager/accounts** *(M6, §4.14)*
+- List all newsletters + which one is active
+- Returns: {accounts: [{id, name, description, created_at}], activeId}
+
+**POST /api/manager/accounts** *(M6, §4.14)*
+- Create a newsletter
+- Body: {name, description?}
+- Returns: the new {id, name, description, created_at}; also sets the
+  active-newsletter cookie to it
+
+**POST /api/manager/accounts/select** *(M6, §4.14)*
+- Switch the active newsletter
+- Body: {id} — validated against `email_servers`
+- Returns: {success: true, activeId}; sets the `email_server_id` cookie
+
+*(No edit / delete / deactivate route in V1 — §4.14. The illustrative
+`GET /api/manager/accounts/:id` from earlier spec versions was folded into
+the list route above.)*
 
 ### 6.2 Email Builder Routes (admin-gated, §4.1)
 
@@ -884,21 +935,21 @@ change from v1.5: unsubscribe was pulled forward from R3 — see §4.4 and §4.1
 **Goals:** Admin dashboard with all core features accessible from one place.
 
 **Tasks:**
-1. Create dashboard landing page (overview of account, subscriber count, recent sends).
-2. Create navigation menu (Subscribers, Email Builder, Send History).
-3. Add an account/email_server selector (supports multiple newsletters under one admin, per FR-1.8 — e.g. "AI PM Perspective", "Dog Rescue").
-4. Integrate M1 (Subscriber Management view).
-5. Integrate M2 (Email Builder view).
-6. Integrate M4 (Send History view).
-7. Test responsive design (mobile, tablet, desktop).
+1. Create dashboard landing page (overview: active newsletter, subscriber count, sends, recent sends).
+2. Put the navigation menu on every admin screen (Dashboard, Subscribers, Builder, Send, History, Newsletters) — one consistent nav, no per-screen button rows (§4.14).
+3. Add a newsletter switcher + a `/admin/newsletters` list/create page (FR-1.8 — e.g. "AI PM Perspective", "Dog Rescue"). Active newsletter tracked by cookie (§4.14).
+4. Add a dedicated `/admin/history` send-history page.
+5. Route all admin views through `getActiveEmailServerId()` so each is scoped to the active newsletter; keep the public subscribe/unsubscribe on the primary.
+6. Test responsive design (mobile, tablet, desktop).
 
 **Acceptance Criteria:**
-- [ ] Dashboard shows subscriber count, recent sends (last 5), and quick links.
-- [ ] Admin can switch between email_servers if more than one exists.
-- [ ] Admin can navigate between sections (Subscribers, Builder, History) without confusion.
-- [ ] All sections are responsive (mobile-first).
-- [ ] Entire dashboard is unreachable without the admin secret (§4.1).
-- [ ] No unintended navigation confusion (back button works as expected).
+- [x] Dashboard shows the active newsletter, subscriber count, send count, and recent sends (last 5). Navigation is the always-present top menu, not per-screen buttons (§4.14).
+- [x] Admin can switch between newsletters when more than one exists (nav switcher + `/admin/newsletters`); with one, the switcher is just the name. Creating a newsletter switches to it.
+- [x] Admin can navigate between every section from the same top menu on every screen — verified no per-screen navigation inconsistency.
+- [x] Each admin view is scoped to the active newsletter; switching re-scopes all of them (full reload, §4.14) — verified with an empty second newsletter ("Dog Rescue").
+- [x] All screens are responsive (mobile-first) — verified on a real phone against the Render deployment.
+- [x] Every admin screen, including `/admin/newsletters` and `/admin/history`, is unreachable without the admin secret (§4.1).
+- [x] Back button works as expected after switching newsletters and moving between sections.
 
 ---
 
@@ -1061,6 +1112,15 @@ workflow end-to-end (now including an image) and polish.
 - `/preferences` (choosing daily vs. weekly) stays in R3: V1 is daily-only, so
   there's nothing to choose yet. It reuses M5's `unsubscribe_token` mechanism.
 
+### Newsletters: List/Create/Switch Only, and Public Signup Is Primary-Only (M6)
+
+- `/admin/newsletters` can create and switch newsletters, but not edit,
+  delete, or deactivate them (§4.14). Activation is R4 (FR-1.10); delete is
+  omitted because it cascades to all subscribers/sections/history.
+- The public `/subscribe` form always adds people to the **primary** (oldest)
+  newsletter, regardless of which one the admin has active. Per-newsletter
+  public signup links are future work — V1's real use is one newsletter.
+
 ### Public Endpoints Have No Rate Limiting in V1
 
 - `/api/public/subscribe` and `/api/public/unsubscribe` are unauthenticated and
@@ -1070,4 +1130,4 @@ workflow end-to-end (now including an image) and polish.
 
 ---
 
-*End of Build Spec v1.6*
+*End of Build Spec v1.7*
