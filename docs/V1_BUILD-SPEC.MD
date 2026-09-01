@@ -1,6 +1,6 @@
 # Claude Code Build Spec — Email Server
 
-**Status:** v1.5 — M0, M1, M2, M3, and M4 complete, READY FOR M5  
+**Status:** v1.6 — M0, M1, M2, M3, M4, and M5 complete, READY FOR M6  
 **Derived from:** `Email_Server_R1_SRD.md` (the requirements document — read it first) + planning review (2026-08-27)  
 **Audience:** Claude Code (the coding agent) + the builder (product owner)
 
@@ -12,6 +12,7 @@
 | v1.3 | 2026-08-30 | M2 built, verified locally, deployed to Render, and tested on a real phone (see §8 checkboxes). Documented the section-styling/Insert Link approach (§4.10) and an iframe sandbox gotcha for any future preview/embedded content (§7.6). Two real bugs found during phone testing and fixed: sections rendering as one undifferentiated block of text (missing per-section styling and line-break handling), and preview links being unclickable (sandboxed iframe blocking `target="_blank"` without `allow-popups`). |
 | v1.4 | 2026-08-31 | M3 built and verified against live Mailgun (real inbox delivery, not just API acceptance), including a real Apple/iCloud address and the deployed Render instance. Documented the Mailgun integration approach (§4.11) and a real deliverability gotcha: a sending domain needs an MX record too, not just SPF/DKIM/DMARC (§7.7) — a real bounce during testing, not a hypothetical. Added image support (Supabase Storage + an Insert Image helper) to M7 as new scope, to be built first in that milestone, ahead of M7's full-workflow retest. |
 | v1.5 | 2026-09-01 | M4 built, verified locally, deployed to Render, and phone-tested. Almost pure front-end work — M3 already shipped and tested the entire sender backend, so M4 added the `/admin/send` workflow page, wired send history into the dashboard, and added navigation. Documented the send-workflow UI approach (§4.12): in-page confirmation panel instead of a native `confirm()` dialog, client-side preview reusing `composeEmail()`, and the dashboard as the one server-rendered admin page (forced dynamic). No new API routes, no schema changes, no new gotchas. |
+| v1.6 | 2026-09-01 | M5 built, verified locally, deployed to Render, and phone-tested. **Scope change:** self-service unsubscribe was pulled forward from R3 into M5 (preferences stays in R3) — the data model already had `unsubscribed`, real sends were going out with no opt-out link (a compliance and deliverability gap), and both unsubscribe and preferences need the same token mechanism, so building it once now makes preferences a cheap R3 add. §4.4 rewritten to reflect this; new §4.13 documents the M5 approach (a `(public)` route group with its own chrome, click-to-confirm unsubscribe, per-recipient footer link via a Mailgun variable). Schema change: `subscribers.unsubscribe_token` (migration `001_m5_unsubscribe_token.sql`). One UX fix found in testing: the M1 "Show unsubscribed" checkbox was additive and made a re-subscribed person look duplicated — replaced with an Active / Unsubscribed / All filter. |
 
 > **How to use this document.**
 > The SRD says *what* and *why*. This spec says *how, with what, and in what order*.
@@ -94,6 +95,8 @@ Server routes (Render)
   └─ Public Pages (no auth required)
      └─ GET /subscribe (form page)
      └─ POST /api/public/subscribe (handle form submission)
+     └─ GET /unsubscribe?token=… (confirm page)       [M5, §4.13]
+     └─ POST /api/public/unsubscribe (un/re-subscribe) [M5, §4.13]
   │
   ▼
 Supabase (Postgres)
@@ -103,8 +106,9 @@ Supabase (Postgres)
   └─ send_history (log of every send)
 ```
 
-Self-service `/unsubscribe` and `/preferences` pages, and Supabase's `auth.users`,
-are **R3/R4** — not built in V1. See §4.1 and §4.4.
+Self-service `/preferences`, and Supabase's `auth.users`, are **R3/R4** — not
+built in V1. Self-service `/unsubscribe` **was** R3 but was pulled into V1 during
+M5 (see §4.4). See §4.1 and §4.4.
 
 ---
 
@@ -152,16 +156,37 @@ structure is Claude Code's call as long as the concerns stay separated.
 **Why:** Known-good choice. Swapping SMTP providers later is isolated to the Email
 Sender component.
 
-### 4.4 Only `/subscribe` is public in V1
+### 4.4 Public pages in V1: `/subscribe` and `/unsubscribe` (not `/preferences`)
 
-**Decision:** `/subscribe` is the only unauthenticated public page in V1.
-Self-service `/unsubscribe` and `/preferences` pages are **not built in V1**.
+**Original decision (v1.0–v1.5):** `/subscribe` is the only unauthenticated
+public page in V1; self-service `/unsubscribe` and `/preferences` are R3.
 
-**Why:** The SRD is explicit that these are R3: *"R1 is daily only... Unsubscribe
-and preferences will also come with R3"* (SRD §2), listed under *Excluded from
-Release 1* (SRD §3), and FR-1.7 tags preference self-service `[R3]`. In V1, the
-admin removes subscribers manually (FR-1.6) — this is already covered by the Email
-Manager (M1).
+**Revised decision (M5, v1.6):** `/subscribe` **and** `/unsubscribe` are public in
+V1. `/preferences` stays in R3.
+
+**Why unsubscribe moved into V1:**
+- The data model already had `subscribers.unsubscribed`, the send already
+  filtered on it, and the admin list already showed it — only the public-facing
+  half was missing.
+- M3/M4 were already sending real email with **no unsubscribe link**. For any
+  real list that's a problem: a functioning opt-out is legally expected
+  (CAN-SPAM), and its absence drives spam complaints, which hurt deliverability
+  for the whole list.
+- Unsubscribe and preferences need the **same core mechanism** — a link in the
+  email that identifies a subscriber with no login (a per-subscriber token).
+  Building it once for unsubscribe now makes preferences a small R3 add rather
+  than a from-scratch task.
+- Cost was about half a milestone on top of M5's subscribe work, and it's
+  cohesive with it (public pages + email footer).
+
+**Why preferences did *not* move:** V1 is daily-only. Weekly sends don't exist
+until R3, so a preferences page would toggle a setting that changes nothing.
+It belongs with the R3 weekly feature; by then the token mechanism from
+unsubscribe already exists. The SRD still tags preference self-service `[R3]`
+(FR-1.7) and this spec keeps it there.
+
+The admin can still remove subscribers manually via the Email Manager (M1,
+FR-1.6); self-service unsubscribe is in addition to that, not a replacement.
 
 ### 4.5 Subscribers get an optional `name` field
 
@@ -295,6 +320,52 @@ M4 added no API routes and no schema changes — just the page, the
 history views, and navigation (nav "Send" link + a "Go to Send" button
 on the Builder, satisfying "navigate from Email Builder to a Send page").
 
+### 4.13 M5 public pages: a `(public)` route group, token unsubscribe, click-to-confirm
+
+**Decision:**
+
+- **Separation via route groups, not a permission check.** Subscriber-facing
+  pages live in a new `src/app/(public)/` group with its own `layout.tsx`
+  (just the newsletter name + a plain footer). It mirrors the admin's
+  `(protected)` group (§4.9): a subscriber never sees an admin menu because
+  no code path renders one there, and there's no link from public pages into
+  `/admin`. The admin's nav gets no "Subscribe" link — the admin manages the
+  list through `/admin/subscribers` (the M1 CRUD table), which is a different
+  page from the public `/subscribe` form despite the similar name.
+- **Unsubscribe identity = a per-subscriber token.** New column
+  `subscribers.unsubscribe_token` (UUID, unique, `default gen_random_uuid()`;
+  migration `supabase/migrations/001_m5_unsubscribe_token.sql`). Separate from
+  the row `id` so it can be rotated later and so the primary key never travels
+  in a URL. This is the shared mechanism R3's preferences page will reuse.
+- **The unsubscribe link is per-recipient, added at send time.** Like the
+  "Hi {name}" greeting (§4.11), the footer line is appended in
+  `src/lib/sendEmail.ts` / `src/lib/mailgun.ts` — not in `composeEmail()`,
+  whose output must stay identical for the shared live preview. It uses a
+  Mailgun recipient variable (`%recipient.unsubscribe_url%`) so each copy
+  carries only that subscriber's token. Test sends have no real subscriber, so
+  they get a tokenless placeholder link.
+- **Unsubscribe happens on a button click, not on page load.** Corporate email
+  link-scanners and prefetchers hit every URL in a message; auto-unsubscribing
+  on GET would opt people out without their action. The `/unsubscribe` page is
+  a server component that resolves the token to an email address and shows a
+  Confirm button; a small client component does the POST. A Resubscribe button
+  on the same page (and re-submitting the `/subscribe` form) reactivates a
+  previously-unsubscribed row.
+- **Small cleanups:** `/` now redirects to `/subscribe` (was `/admin`; the
+  public front door — the admin bookmarks `/admin`). Root `<title>` fixed.
+  The admin Subscribers page shows the public signup URL as a convenience.
+
+**UX fix found during M5 testing:** the M1 "Show unsubscribed" checkbox was
+*additive* (checked = active + unsubscribed together, unlabeled), so a
+re-subscribed person appeared to be listed twice. Replaced with an
+**Active / Unsubscribed / All** filter (`GET /api/manager/subscribers?status=`,
+replacing the old `?unsubscribed=` flag), with per-row status badges in the
+All view.
+
+**No new gotchas.** One deploy note: `NEXT_PUBLIC_APP_URL` is baked in at
+build time, so it must be set correctly in Render's env **before** the build
+for unsubscribe links in sent email to point at the live site.
+
 ---
 
 ## 5. Data Model & Database Schema
@@ -331,9 +402,13 @@ CREATE TABLE subscribers (
   subscription_preference ENUM('daily', 'weekly', 'both') DEFAULT 'daily',
   -- preference is fixed at 'daily' for all V1 subscribers; selection UI is R3 (§4.4)
   created_at TIMESTAMP DEFAULT NOW(),
-  unsubscribed BOOLEAN DEFAULT FALSE
+  unsubscribed BOOLEAN DEFAULT FALSE,
+  unsubscribe_token UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE
+  -- M5 (§4.13): identifies a subscriber from a public unsubscribe link with
+  -- no login. Added via supabase/migrations/001_m5_unsubscribe_token.sql.
 );
--- Indexes: email_server_id, email (for lookups), unsubscribed (for filtering)
+-- Indexes: email_server_id, email (for lookups), unsubscribed (for filtering),
+-- unsubscribe_token (unique, for the /unsubscribe lookup)
 
 -- Email_Sections: template sections
 CREATE TABLE email_sections (
@@ -386,6 +461,12 @@ MAILGUN_FROM_EMAIL=noreply@your-app.com
 # App
 NEXT_PUBLIC_APP_URL=http://localhost:3000 (dev) or https://your-app.render.com (prod)
 ```
+
+> **`NEXT_PUBLIC_APP_URL` is baked in at build time** (that's what the
+> `NEXT_PUBLIC_` prefix means). Since M5, the unsubscribe links in sent email
+> are built from it — so on Render it must be set to the live origin (no
+> trailing slash) *before* the build, and changing it later needs a rebuild
+> (Manual Deploy → Clear build cache & deploy).
 
 ---
 
@@ -479,10 +560,24 @@ the underlying capability is there.
 
 **POST /api/public/subscribe**
 - Handle form submission
-- Body: {email, name?, email_server_id}
-- Returns: {success: true, message: "Thanks for subscribing!"}
-- Validation: email format, email_server_id exists
-- Note: no preference selection in V1 (defaults to 'daily' — §4.4); no unsubscribe/preferences endpoints in V1 (§4.4)
+- Body: {email, name?} — email_server_id defaults server-side (§4.7), the
+  public form doesn't know it
+- Returns: {success: true, message} (message varies: new signup vs. reactivated
+  a previously-unsubscribed address)
+- Validation: email format; an already-active address returns a 409 with a
+  clear message; never returns subscriber data
+- Note: no preference selection in V1 (defaults to 'daily' — §4.4)
+
+**GET /unsubscribe?token=…** *(M5, §4.13)*
+- Server component: resolves the token to an email address and renders a
+  Confirm button. Does **not** unsubscribe on load (link-scanner safe).
+
+**POST /api/public/unsubscribe** *(M5, §4.13)*
+- Body: {token, action?: "resubscribe"} — default action unsubscribes
+- Sets/clears `subscribers.unsubscribed` for the row matching the token;
+  idempotent
+- Returns: {success: true, email, unsubscribed} or 404 for an unknown token
+- Note: `/preferences` is still R3 (§4.4) — no endpoint in V1
 
 ---
 
@@ -494,6 +589,10 @@ the underlying capability is there.
 - Admin routes (which can see the full list) are protected by the shared-secret
   gate (§4.1), not by per-owner database policies (deferred to R4 — see §5.1).
 - The public `/subscribe` page never returns or displays existing subscriber data.
+- The public `/unsubscribe` page (M5, §4.13) reveals only the one email address
+  its token resolves to — the token comes from that person's own email, and no
+  other subscriber data is exposed. The unsubscribe link in each sent email is
+  per-recipient (a Mailgun variable), so no subscriber sees another's token.
 - The send process does not expose the full subscriber list to itself in transit —
   whether implemented as individual sends or a single batched call with per-recipient
   variables (§7.3), no subscriber's address is visible to another subscriber.
@@ -747,24 +846,36 @@ three.
 
 ---
 
-### M5: Public Subscribe Page
+### M5: Public Subscribe + Unsubscribe Pages
 
-**Goals:** New subscribers can register without logging in. (Unsubscribe/preferences self-service is R3 — see §4.4; admin removes subscribers manually via M1 in V1.)
+**Goals:** New subscribers can register without logging in, and existing
+subscribers can unsubscribe (and resubscribe) themselves from a link in the
+email footer. (`/preferences` self-service is still R3 — see §4.4. Scope
+change from v1.5: unsubscribe was pulled forward from R3 — see §4.4 and §4.13.)
 
 **Tasks:**
-1. Create public `/subscribe` page (email + optional name).
-2. Implement `POST /api/public/subscribe` (§6.4).
-3. Add validation (email format, email_server_id exists).
-4. Add success/error messages.
-5. Test on mobile and desktop.
+1. Add the `unsubscribe_token` column (migration `001_m5_unsubscribe_token.sql`).
+2. Create a `(public)` route group with its own minimal chrome (§4.13),
+   separate from the admin nav.
+3. Create public `/subscribe` page (email + optional name) + `POST
+   /api/public/subscribe` (§6.4), with re-subscribe reactivating a
+   previously-unsubscribed row.
+4. Create public `/unsubscribe` page (click-to-confirm, resubscribe option) +
+   `POST /api/public/unsubscribe` (§6.4).
+5. Append a per-recipient unsubscribe link to every real send's footer (§4.13).
+6. Add validation and success/error messages throughout.
+7. `/` → `/subscribe`; show the public signup URL on the admin Subscribers page.
+8. Test on mobile and desktop.
 
 **Acceptance Criteria:**
-- [ ] `/subscribe` page is accessible without login.
-- [ ] Subscriber can enter email (+ optional name), submit, and receive a success message.
-- [ ] New subscriber is created in the database with `subscription_preference = 'daily'`.
-- [ ] Duplicate/invalid email submissions show a clear error.
-- [ ] Page is mobile-responsive and touch-friendly.
-- [ ] Page never exposes existing subscriber data.
+- [x] `/subscribe` page is accessible without login, with its own chrome and no admin menu.
+- [x] Subscriber can enter email (+ optional name), submit, and receive a success message.
+- [x] New subscriber is created in the database with `subscription_preference = 'daily'`.
+- [x] Duplicate (already-active) and invalid email submissions show a clear error; a previously-unsubscribed address is reactivated with a "welcome back" message.
+- [x] Pages are mobile-responsive and touch-friendly — verified on a real phone against the Render deployment.
+- [x] Pages never expose existing subscriber data.
+- [x] Every real send carries a working per-subscriber unsubscribe link in the footer (test sends get a tokenless placeholder) — verified end-to-end on a real inbox.
+- [x] `/unsubscribe` shows the address, unsubscribes only on an explicit click, and offers resubscribe; the admin list reflects the change (Active / Unsubscribed / All filter) and a follow-up send skips unsubscribed people.
 
 ---
 
@@ -883,8 +994,8 @@ workflow end-to-end (now including an image) and polish.
 ### R3: Weekly & Subscriber Features
 
 - **Weekly emails:** add preference for weekly sends; compose separate weekly email.
-- **Self-service unsubscribe page:** public `/unsubscribe` page with auto-unsubscribe link (with token) in email footer (explicitly excluded from V1 — see §4.4).
-- **Self-service preferences page:** public `/preferences` page with auto-preference-update link in email footer (explicitly excluded from V1 — see §4.4).
+- ~~**Self-service unsubscribe page**~~ — **done in V1 (M5, §4.13):** `/unsubscribe` with a per-subscriber token link in every send's footer. R3 only needs to add engagement-webhook wiring if desired.
+- **Self-service preferences page:** public `/preferences` page with auto-preference-update link in email footer (still V1-excluded — see §4.4). The M5 token mechanism (`subscribers.unsubscribe_token`, §4.13) is the foundation this reuses.
 - **Engagement tracking:** hook into Mailgun webhooks to log opens, clicks (basic analytics).
 
 ### R4: Multi-User
@@ -943,6 +1054,20 @@ workflow end-to-end (now including an image) and polish.
 - Admin pastes content into the editor.
 - R2 integrates Content Builder to fetch content automatically.
 
+### Self-Service Unsubscribe Is in V1; Preferences Is Not
+
+- V1 ships self-service unsubscribe/resubscribe (M5, §4.13) — pulled forward
+  from R3 because real sends need a working opt-out link.
+- `/preferences` (choosing daily vs. weekly) stays in R3: V1 is daily-only, so
+  there's nothing to choose yet. It reuses M5's `unsubscribe_token` mechanism.
+
+### Public Endpoints Have No Rate Limiting in V1
+
+- `/api/public/subscribe` and `/api/public/unsubscribe` are unauthenticated and
+  not rate-limited. Acceptable for a low-traffic single-operator V1; add a
+  limiter (or a CAPTCHA on subscribe) if abuse shows up. Unsubscribe is
+  idempotent and only ever affects the single row its token points at.
+
 ---
 
-*End of Build Spec v1.4*
+*End of Build Spec v1.6*
