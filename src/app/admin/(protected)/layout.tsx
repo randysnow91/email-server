@@ -17,6 +17,9 @@ export default function ProtectedAdminLayout({ children }: { children: React.Rea
           <Link href="/admin/builder" className="text-sm text-gray-600 hover:text-gray-900">
             Builder
           </Link>
+          <Link href="/admin/send" className="text-sm text-gray-600 hover:text-gray-900">
+            Send
+          </Link>
         </div>
         <form action="/api/admin/logout" method="post">
           <button

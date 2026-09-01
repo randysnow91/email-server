@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SECTION_TYPES, composeEmail, type SectionType } from "@/lib/composeEmail";
 
@@ -178,11 +179,19 @@ export default function BuilderPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-8">
-      <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Email Builder</h1>
-        <p className="text-sm text-gray-500">
-          Compose each section below. The preview on the right updates as you type.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Email Builder</h1>
+          <p className="text-sm text-gray-500">
+            Compose each section below. The preview on the right updates as you type.
+          </p>
+        </div>
+        <Link
+          href="/admin/send"
+          className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white"
+        >
+          Go to Send →
+        </Link>
       </div>
 
       {loadError && (
