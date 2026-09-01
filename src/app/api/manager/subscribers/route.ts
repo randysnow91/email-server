@@ -5,9 +5,18 @@ import { isValidEmail } from "@/lib/validation";
 
 const DEFAULT_LIMIT = 50;
 
+// active = only current subscribers (default), unsubscribed = only people
+// who have left, all = both. Replaces the old additive "unsubscribed=true"
+// flag, which showed active + unsubscribed together with no way to see
+// unsubscribed on their own.
+const VALID_STATUSES = ["active", "unsubscribed", "all"] as const;
+
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
-  const includeUnsubscribed = params.get("unsubscribed") === "true";
+  const statusParam = params.get("status");
+  const status = VALID_STATUSES.includes(statusParam as (typeof VALID_STATUSES)[number])
+    ? (statusParam as (typeof VALID_STATUSES)[number])
+    : "active";
   const limit = Math.min(Number(params.get("limit")) || DEFAULT_LIMIT, DEFAULT_LIMIT);
   const offset = Math.max(Number(params.get("offset")) || 0, 0);
 
@@ -22,8 +31,10 @@ export async function GET(request: NextRequest) {
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (!includeUnsubscribed) {
+  if (status === "active") {
     query = query.eq("unsubscribed", false);
+  } else if (status === "unsubscribed") {
+    query = query.eq("unsubscribed", true);
   }
 
   const { data, error, count } = await query;

@@ -15,11 +15,18 @@ type Subscriber = {
 
 const LIMIT = 50;
 
+type StatusFilter = "active" | "unsubscribed" | "all";
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "active", label: "Active" },
+  { value: "unsubscribed", label: "Unsubscribed" },
+  { value: "all", label: "All" },
+];
+
 export default function SubscribersPage() {
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
-  const [showUnsubscribed, setShowUnsubscribed] = useState(false);
+  const [status, setStatus] = useState<StatusFilter>("active");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -27,6 +34,8 @@ export default function SubscribersPage() {
   const [newName, setNewName] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+
+  const [origin, setOrigin] = useState("");
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -39,7 +48,7 @@ export default function SubscribersPage() {
     setLoadError(null);
     try {
       const params = new URLSearchParams({
-        unsubscribed: String(showUnsubscribed),
+        status,
         limit: String(LIMIT),
         offset: String(offset),
       });
@@ -53,7 +62,12 @@ export default function SubscribersPage() {
     } finally {
       setLoading(false);
     }
-  }, [showUnsubscribed, offset]);
+  }, [status, offset]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOrigin(window.location.origin);
+  }, []);
 
   useEffect(() => {
     // Fetch on mount and whenever the filter/page changes. Safe here:
@@ -131,7 +145,25 @@ export default function SubscribersPage() {
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
       <div>
         <h1 className="text-2xl font-semibold text-gray-900">Subscribers</h1>
-        <p className="text-sm text-gray-500">{total} total</p>
+        <p className="text-sm text-gray-500">
+          {total}{" "}
+          {status === "active" ? "active" : status === "unsubscribed" ? "unsubscribed" : "total"}
+        </p>
+        <p className="mt-2 text-sm text-gray-500">
+          Public signup form:{" "}
+          {origin ? (
+            <a
+              href={`${origin}/subscribe`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-blue-600 hover:underline"
+            >
+              {origin}/subscribe
+            </a>
+          ) : (
+            <span className="font-medium">/subscribe</span>
+          )}
+        </p>
       </div>
 
       <div className="rounded-lg border border-gray-200 bg-white p-4">
@@ -166,17 +198,25 @@ export default function SubscribersPage() {
         {addError && <p className="mt-2 text-sm text-red-600">{addError}</p>}
       </div>
 
-      <label className="flex items-center gap-2 text-sm text-gray-700">
-        <input
-          type="checkbox"
-          checked={showUnsubscribed}
-          onChange={(e) => {
-            setShowUnsubscribed(e.target.checked);
-            setOffset(0);
-          }}
-        />
-        Show unsubscribed
-      </label>
+      <div className="inline-flex rounded-md border border-gray-300 p-0.5 text-sm">
+        {STATUS_FILTERS.map((f) => (
+          <button
+            key={f.value}
+            type="button"
+            onClick={() => {
+              setStatus(f.value);
+              setOffset(0);
+            }}
+            className={`rounded px-3 py-1.5 font-medium ${
+              status === f.value
+                ? "bg-gray-900 text-white"
+                : "text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
 
       {loadError && (
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>
@@ -236,11 +276,16 @@ export default function SubscribersPage() {
                   <div>
                     <p className="font-medium text-gray-900">
                       {subscriber.email}
-                      {subscriber.unsubscribed && (
-                        <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
-                          Unsubscribed
-                        </span>
-                      )}
+                      {status !== "active" &&
+                        (subscriber.unsubscribed ? (
+                          <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
+                            Unsubscribed
+                          </span>
+                        ) : (
+                          <span className="ml-2 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
+                            Active
+                          </span>
+                        ))}
                     </p>
                     <p className="text-sm text-gray-500">
                       {subscriber.name ? `${subscriber.name} · ` : ""}

@@ -36,3 +36,20 @@ export async function getDefaultEmailServerId(): Promise<string> {
   cachedDefaultId = created.id as string;
   return cachedDefaultId;
 }
+
+// The newsletter's display name, for public-page chrome. Falls back to the
+// default name if the lookup fails, so a transient DB hiccup never leaves
+// a public page without a title.
+export async function getDefaultEmailServerName(): Promise<string> {
+  try {
+    const id = await getDefaultEmailServerId();
+    const { data } = await supabase
+      .from("email_servers")
+      .select("name")
+      .eq("id", id)
+      .single();
+    return (data?.name as string) || DEFAULT_EMAIL_SERVER_NAME;
+  } catch {
+    return DEFAULT_EMAIL_SERVER_NAME;
+  }
+}

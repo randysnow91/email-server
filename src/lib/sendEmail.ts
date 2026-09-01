@@ -1,6 +1,12 @@
 import { supabase } from "@/lib/supabase";
 import { composeEmail, type SectionContentMap } from "@/lib/composeEmail";
-import { withGreeting, type Recipient, type BatchSendResult } from "@/lib/mailgun";
+import {
+  withGreeting,
+  withUnsubscribeFooter,
+  type Recipient,
+  type BatchSendResult,
+} from "@/lib/mailgun";
+import { unsubscribeUrl } from "@/lib/appUrl";
 
 export class MissingMainBodyError extends Error {}
 
@@ -30,18 +36,23 @@ export async function composeForSend(
   }
 
   const { subject, html } = composeEmail(sectionMap);
-  return { subject, html: withGreeting(html) };
+  return { subject, html: withUnsubscribeFooter(withGreeting(html)) };
 }
 
 export async function fetchActiveSubscribers(emailServerId: string): Promise<Recipient[]> {
   const { data, error } = await supabase
     .from("subscribers")
-    .select("email, name")
+    .select("email, name, unsubscribe_token")
     .eq("email_server_id", emailServerId)
     .eq("unsubscribed", false);
 
   if (error) throw new Error(error.message);
-  return data;
+
+  return data.map((row) => ({
+    email: row.email,
+    name: row.name,
+    unsubscribeUrl: unsubscribeUrl(row.unsubscribe_token),
+  }));
 }
 
 export async function logSendHistory(params: {

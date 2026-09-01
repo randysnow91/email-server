@@ -27,7 +27,11 @@ create table subscribers (
   subscription_preference subscription_preference not null default 'daily',
   -- preference is fixed at 'daily' for all V1 subscribers; selection UI is R3
   created_at timestamptz not null default now(),
-  unsubscribed boolean not null default false
+  unsubscribed boolean not null default false,
+  -- Identifies a subscriber from a public unsubscribe link with no login.
+  -- Separate from `id` so it can be rotated and so the PK never travels in
+  -- a URL. Added in M5 - see supabase/migrations/001_m5_unsubscribe_token.sql.
+  unsubscribe_token uuid not null default gen_random_uuid()
 );
 create index idx_subscribers_email_server_id on subscribers (email_server_id);
 create index idx_subscribers_email on subscribers (email);
@@ -36,6 +40,7 @@ create index idx_subscribers_unsubscribed on subscribers (unsubscribed);
 -- what turns a duplicate signup into a clean 409 error instead of a silent
 -- second row.
 alter table subscribers add constraint subscribers_email_server_id_email_key unique (email_server_id, email);
+alter table subscribers add constraint subscribers_unsubscribe_token_key unique (unsubscribe_token);
 
 -- Email_Sections: template sections
 create table email_sections (

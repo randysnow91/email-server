@@ -2,6 +2,8 @@
 // this is one endpoint, not worth a new dependency). Handles the actual
 // email delivery for both /api/sender/send and /api/sender/test-send.
 
+import { unsubscribePageUrl } from "@/lib/appUrl";
+
 // Mailgun's own hard limit on a single batch call. Chunking at this size
 // keeps sendBatch() correct even if the subscriber list ever grows past it,
 // without needing a rewrite later.
@@ -10,6 +12,9 @@ const MAILGUN_BATCH_LIMIT = 1000;
 export type Recipient = {
   email: string;
   name?: string | null;
+  // Absolute URL to this subscriber's unsubscribe page. Omitted for test
+  // sends (no real subscriber, so no token) - those get a generic link.
+  unsubscribeUrl?: string | null;
 };
 
 export type BatchSendResult = {
@@ -27,11 +32,13 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+type RecipientVars = { name: string; unsubscribe_url: string };
+
 async function callMailgun(params: {
   to: string[];
   subject: string;
   html: string;
-  recipientVariables: Record<string, { name: string }>;
+  recipientVariables: Record<string, RecipientVars>;
 }): Promise<void> {
   const apiKey = process.env.MAILGUN_API_KEY;
   const domain = process.env.MAILGUN_DOMAIN;
@@ -86,9 +93,12 @@ export async function sendBatch(
 
   const results = await Promise.all(
     batches.map(async (batch) => {
-      const recipientVariables: Record<string, { name: string }> = {};
+      const recipientVariables: Record<string, RecipientVars> = {};
       for (const r of batch) {
-        recipientVariables[r.email] = { name: r.name?.trim() || "there" };
+        recipientVariables[r.email] = {
+          name: r.name?.trim() || "there",
+          unsubscribe_url: r.unsubscribeUrl?.trim() || unsubscribePageUrl(),
+        };
       }
 
       try {
@@ -124,4 +134,18 @@ export function withGreeting(html: string): string {
   const greeting =
     '<div style="margin-bottom:24px;font-size:16px;color:#111827;">Hi %recipient.name%,</div>';
   return `${greeting}\n${html}`;
+}
+
+// The unsubscribe line appended to every send. Like the greeting, it's
+// added at send time (not in composeEmail()) and uses a per-recipient
+// Mailgun variable so each subscriber gets a link carrying only their own
+// token. Required in any real bulk email - both for compliance and so
+// people who want out don't mark the mail as spam instead.
+export function withUnsubscribeFooter(html: string): string {
+  const footer =
+    '<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;line-height:1.5;color:#9ca3af;">' +
+    "You're receiving this because you subscribed. " +
+    '<a href="%recipient.unsubscribe_url%" style="color:#9ca3af;">Unsubscribe</a>.' +
+    "</div>";
+  return `${html}\n${footer}`;
 }
