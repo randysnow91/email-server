@@ -351,7 +351,15 @@ export default function SendPage() {
 
       {/* Send history */}
       <div>
-        <h2 className="mb-2 text-lg font-semibold text-gray-900">Recent sends</h2>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Recent sends</h2>
+          <Link
+            href="/admin/history"
+            className="text-sm font-medium text-blue-600 hover:underline"
+          >
+            View all
+          </Link>
+        </div>
         {history.length === 0 ? (
           <p className="text-sm text-gray-500">No sends yet.</p>
         ) : (

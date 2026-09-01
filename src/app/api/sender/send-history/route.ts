@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { getDefaultEmailServerId } from "@/lib/emailServer";
+import { getActiveEmailServerId } from "@/lib/emailServer";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
-  const emailServerId = params.get("email_server_id") ?? (await getDefaultEmailServerId());
+  const emailServerId = params.get("email_server_id") ?? (await getActiveEmailServerId());
   const limit = Math.min(Number(params.get("limit")) || DEFAULT_LIMIT, MAX_LIMIT);
 
   const { data, error } = await supabase

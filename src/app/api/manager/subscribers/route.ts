@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { getDefaultEmailServerId } from "@/lib/emailServer";
+import { getActiveEmailServerId } from "@/lib/emailServer";
 import { isValidEmail } from "@/lib/validation";
 
 const DEFAULT_LIMIT = 50;
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   const limit = Math.min(Number(params.get("limit")) || DEFAULT_LIMIT, DEFAULT_LIMIT);
   const offset = Math.max(Number(params.get("offset")) || 0, 0);
 
-  const emailServerId = params.get("email_server_id") ?? (await getDefaultEmailServerId());
+  const emailServerId = params.get("email_server_id") ?? (await getActiveEmailServerId());
 
   let query = supabase
     .from("subscribers")
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "A valid email address is required." }, { status: 400 });
   }
 
-  const emailServerId = body.email_server_id ?? (await getDefaultEmailServerId());
+  const emailServerId = body.email_server_id ?? (await getActiveEmailServerId());
 
   const { data, error } = await supabase
     .from("subscribers")

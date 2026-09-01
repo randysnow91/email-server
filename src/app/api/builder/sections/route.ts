@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { getDefaultEmailServerId } from "@/lib/emailServer";
+import { getActiveEmailServerId } from "@/lib/emailServer";
 import { SECTION_TYPES, type SectionType } from "@/lib/composeEmail";
 
 const VALID_SECTION_TYPES = SECTION_TYPES.map((s) => s.type);
 
 export async function GET(request: NextRequest) {
   const emailServerId =
-    request.nextUrl.searchParams.get("email_server_id") ?? (await getDefaultEmailServerId());
+    request.nextUrl.searchParams.get("email_server_id") ?? (await getActiveEmailServerId());
 
   const { data, error } = await supabase
     .from("email_sections")
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const emailServerId = body.email_server_id ?? (await getDefaultEmailServerId());
+  const emailServerId = body.email_server_id ?? (await getActiveEmailServerId());
 
   // Upsert on (email_server_id, section_type): "Save" always means create-or-
   // update this section, never a duplicate row (schema.sql has a matching

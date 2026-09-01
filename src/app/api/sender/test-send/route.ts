@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDefaultEmailServerId } from "@/lib/emailServer";
+import { getActiveEmailServerId } from "@/lib/emailServer";
 import { composeForSend, logSendHistory, MissingMainBodyError } from "@/lib/sendEmail";
 import { sendBatch } from "@/lib/mailgun";
 import { isValidEmail } from "@/lib/validation";
@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "A valid test_email is required." }, { status: 400 });
   }
 
-  const emailServerId = body.email_server_id ?? (await getDefaultEmailServerId());
+  const emailServerId = body.email_server_id ?? (await getActiveEmailServerId());
 
   let composed;
   try {

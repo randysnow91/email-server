@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDefaultEmailServerId } from "@/lib/emailServer";
+import { getActiveEmailServerId } from "@/lib/emailServer";
 import {
   composeForSend,
   fetchActiveSubscribers,
@@ -10,7 +10,7 @@ import { sendBatch } from "@/lib/mailgun";
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
-  const emailServerId = body.email_server_id ?? (await getDefaultEmailServerId());
+  const emailServerId = body.email_server_id ?? (await getActiveEmailServerId());
 
   let composed;
   try {
