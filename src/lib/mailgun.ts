@@ -136,16 +136,7 @@ export function withGreeting(html: string): string {
   return `${greeting}\n${html}`;
 }
 
-// The unsubscribe line appended to every send. Like the greeting, it's
-// added at send time (not in composeEmail()) and uses a per-recipient
-// Mailgun variable so each subscriber gets a link carrying only their own
-// token. Required in any real bulk email - both for compliance and so
-// people who want out don't mark the mail as spam instead.
-export function withUnsubscribeFooter(html: string): string {
-  const footer =
-    '<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;line-height:1.5;color:#9ca3af;">' +
-    "You're receiving this because you subscribed. " +
-    '<a href="%recipient.unsubscribe_url%" style="color:#9ca3af;">Unsubscribe</a>.' +
-    "</div>";
-  return `${html}\n${footer}`;
-}
+// The per-recipient unsubscribe link now lives in the footer region that
+// composeEmail() builds - the send passes Mailgun's
+// "%recipient.unsubscribe_url%" token as its unsubscribeUrl option. The
+// value that fills that token is set per recipient in sendBatch() below.

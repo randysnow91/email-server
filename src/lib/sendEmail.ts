@@ -1,12 +1,12 @@
 import { supabase } from "@/lib/supabase";
 import { composeEmail, type SectionContentMap } from "@/lib/composeEmail";
-import {
-  withGreeting,
-  withUnsubscribeFooter,
-  type Recipient,
-  type BatchSendResult,
-} from "@/lib/mailgun";
+import { withGreeting, type Recipient, type BatchSendResult } from "@/lib/mailgun";
 import { unsubscribeUrl } from "@/lib/appUrl";
+
+// Mailgun fills this token in per recipient from the recipient-variables
+// sent with the batch (see sendBatch); composeEmail drops it into the
+// footer's unsubscribe link href.
+const MAILGUN_UNSUBSCRIBE_TOKEN = "%recipient.unsubscribe_url%";
 
 export class MissingMainBodyError extends Error {}
 
@@ -35,8 +35,10 @@ export async function composeForSend(
     );
   }
 
-  const { subject, html } = composeEmail(sectionMap);
-  return { subject, html: withUnsubscribeFooter(withGreeting(html)) };
+  const { subject, html } = composeEmail(sectionMap, {
+    unsubscribeUrl: MAILGUN_UNSUBSCRIBE_TOKEN,
+  });
+  return { subject, html: withGreeting(html) };
 }
 
 export async function fetchActiveSubscribers(emailServerId: string): Promise<Recipient[]> {

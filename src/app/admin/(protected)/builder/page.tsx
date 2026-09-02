@@ -28,18 +28,35 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+// So "example.com" becomes a real link, not a broken relative one. Leaves
+// full URLs, mailto:, tel:, anchors, and site-relative paths alone.
+function normalizeUrl(raw: string): string {
+  const url = raw.trim();
+  if (/^(https?:|mailto:|tel:)/i.test(url) || url.startsWith("#") || url.startsWith("/")) {
+    return url;
+  }
+  return `https://${url}`;
+}
+
 export default function BuilderPage() {
   const [sections, setSections] = useState<SectionsState>(emptyState);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<SectionType>>(new Set(["main_body"]));
   const [savingType, setSavingType] = useState<SectionType | null>(null);
+  const [deletingType, setDeletingType] = useState<SectionType | null>(null);
   const [sectionErrors, setSectionErrors] = useState<Partial<Record<SectionType, string>>>({});
 
   const fieldRefs = useRef<Partial<Record<SectionType, FieldEl>>>({});
   const [linkFormType, setLinkFormType] = useState<SectionType | null>(null);
   const [linkText, setLinkText] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
+
+  const [imageFormType, setImageFormType] = useState<SectionType | null>(null);
+  const [imageAlt, setImageAlt] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
 
   const loadSections = useCallback(async () => {
     setLoading(true);
@@ -99,7 +116,28 @@ export default function BuilderPage() {
     setSections((prev) => ({ ...prev, [type]: { ...prev[type], content } }));
   }
 
+  // Drops `html` in at the textarea's cursor (or the end if it isn't
+  // focused) and leaves the cursor right after it. Shared by Insert Link
+  // and Insert Image.
+  function insertAtCursor(type: SectionType, html: string) {
+    const el = fieldRefs.current[type];
+    const current = sections[type].content;
+    const start = el && typeof el.selectionStart === "number" ? el.selectionStart : current.length;
+    const end = el && typeof el.selectionEnd === "number" ? el.selectionEnd : current.length;
+    const next = current.slice(0, start) + html + current.slice(end);
+    const cursorAfter = start + html.length;
+
+    updateContent(type, next);
+
+    requestAnimationFrame(() => {
+      const target = fieldRefs.current[type];
+      target?.focus();
+      target?.setSelectionRange(cursorAfter, cursorAfter);
+    });
+  }
+
   function openLinkForm(type: SectionType) {
+    setImageFormType(null);
     setLinkFormType(type);
     setLinkText("");
     setLinkUrl("");
@@ -112,28 +150,51 @@ export default function BuilderPage() {
   }
 
   function handleInsertLink(type: SectionType) {
-    const url = linkUrl.trim();
-    if (!url) return;
+    if (!linkUrl.trim()) return;
+    const url = normalizeUrl(linkUrl);
     const text = linkText.trim() || url;
     const linkHtml = `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`;
-
-    const el = fieldRefs.current[type];
-    const current = sections[type].content;
-    const start = el && typeof el.selectionStart === "number" ? el.selectionStart : current.length;
-    const end = el && typeof el.selectionEnd === "number" ? el.selectionEnd : current.length;
-    const next = current.slice(0, start) + linkHtml + current.slice(end);
-    const cursorAfter = start + linkHtml.length;
-
-    updateContent(type, next);
+    insertAtCursor(type, linkHtml);
     closeLinkForm();
+  }
 
-    // Put the cursor right after the inserted link so typing continues
-    // naturally, once React has re-rendered the field with the new value.
-    requestAnimationFrame(() => {
-      const target = fieldRefs.current[type];
-      target?.focus();
-      target?.setSelectionRange(cursorAfter, cursorAfter);
-    });
+  function openImageForm(type: SectionType) {
+    setLinkFormType(null);
+    setImageFormType(type);
+    setImageAlt("");
+    setImageFile(null);
+    setImageError(null);
+  }
+
+  function closeImageForm() {
+    setImageFormType(null);
+    setImageAlt("");
+    setImageFile(null);
+    setImageError(null);
+  }
+
+  async function handleInsertImage(type: SectionType) {
+    if (!imageFile) return;
+    setImageUploading(true);
+    setImageError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", imageFile);
+      const res = await fetch("/api/builder/images", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Upload failed.");
+
+      const alt = escapeHtml(imageAlt.trim());
+      // display:block + margin so the image sits on its own line rather than
+      // wedging inline with the surrounding text - the usual newsletter look.
+      const imgHtml = `<img src="${escapeHtml(data.url)}" alt="${alt}" style="max-width:100%;height:auto;display:block;margin:12px 0;" />`;
+      insertAtCursor(type, imgHtml);
+      closeImageForm();
+    } catch (err) {
+      setImageError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setImageUploading(false);
+    }
   }
 
   async function handleSave(type: SectionType) {
@@ -167,12 +228,21 @@ export default function BuilderPage() {
     if (!confirm(`Delete the ${SECTION_TYPES.find((s) => s.type === type)?.label} section? This can't be undone.`))
       return;
 
-    const res = await fetch(`/api/builder/sections/${id}`, { method: "DELETE" });
-    if (res.ok) {
+    setDeletingType(type);
+    setSectionErrors((prev) => ({ ...prev, [type]: undefined }));
+    try {
+      const res = await fetch(`/api/builder/sections/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        throw new Error((await res.json()).error ?? "Failed to delete section.");
+      }
       setSections((prev) => ({ ...prev, [type]: { id: null, content: "", savedContent: "" } }));
-    } else {
-      const data = await res.json();
-      alert(data.error ?? "Failed to delete section.");
+    } catch (err) {
+      setSectionErrors((prev) => ({
+        ...prev,
+        [type]: err instanceof Error ? err.message : "Failed to delete section.",
+      }));
+    } finally {
+      setDeletingType(null);
     }
   }
 
@@ -257,56 +327,117 @@ export default function BuilderPage() {
                         />
                       )}
 
-                      {canLink &&
-                        (linkFormType === type ? (
-                          <div className="flex flex-col gap-2 rounded-md border border-gray-200 bg-gray-50 p-3 sm:flex-row sm:items-end">
-                            <div className="flex-1">
-                              <label className="text-xs text-gray-500">Link text</label>
-                              <input
-                                type="text"
-                                value={linkText}
-                                onChange={(e) => setLinkText(e.target.value)}
-                                placeholder="e.g. Shop Now"
-                                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-gray-500 focus:outline-none"
-                              />
-                            </div>
-                            <div className="flex-1">
-                              <label className="text-xs text-gray-500">URL</label>
-                              <input
-                                type="url"
-                                value={linkUrl}
-                                onChange={(e) => setLinkUrl(e.target.value)}
-                                placeholder="https://..."
-                                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-gray-500 focus:outline-none"
-                              />
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleInsertLink(type)}
-                                disabled={!linkUrl.trim()}
-                                className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-                              >
-                                Insert
-                              </button>
-                              <button
-                                type="button"
-                                onClick={closeLinkForm}
-                                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700"
-                              >
-                                Cancel
-                              </button>
-                            </div>
+                      {canLink && (
+                        <div className="space-y-2">
+                          <div className="flex gap-4">
+                            <button
+                              type="button"
+                              onClick={() => openLinkForm(type)}
+                              className="text-sm font-medium text-blue-600 hover:underline"
+                            >
+                              + Insert Link
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openImageForm(type)}
+                              className="text-sm font-medium text-blue-600 hover:underline"
+                            >
+                              + Insert Image
+                            </button>
                           </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => openLinkForm(type)}
-                            className="text-sm font-medium text-blue-600 hover:underline"
-                          >
-                            + Insert Link
-                          </button>
-                        ))}
+
+                          {linkFormType === type && (
+                            <div className="flex flex-col gap-2 rounded-md border border-gray-200 bg-gray-50 p-3 sm:flex-row sm:items-end">
+                              <div className="flex-1">
+                                <label className="text-xs text-gray-500">Link text</label>
+                                <input
+                                  type="text"
+                                  value={linkText}
+                                  onChange={(e) => setLinkText(e.target.value)}
+                                  placeholder="e.g. Shop Now"
+                                  className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-gray-500 focus:outline-none"
+                                />
+                              </div>
+                              <div className="flex-1">
+                                <label className="text-xs text-gray-500">URL</label>
+                                <input
+                                  type="url"
+                                  value={linkUrl}
+                                  onChange={(e) => setLinkUrl(e.target.value)}
+                                  placeholder="https://..."
+                                  className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-gray-500 focus:outline-none"
+                                />
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleInsertLink(type)}
+                                  disabled={!linkUrl.trim()}
+                                  className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                                >
+                                  Insert
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={closeLinkForm}
+                                  className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {imageFormType === type && (
+                            <div className="flex flex-col gap-2 rounded-md border border-gray-200 bg-gray-50 p-3">
+                              <div>
+                                <label className="text-xs text-gray-500">
+                                  Image file (PNG, JPEG, GIF, or WebP — max 5 MB)
+                                </label>
+                                <input
+                                  type="file"
+                                  accept="image/png,image/jpeg,image/gif,image/webp"
+                                  onChange={(e) => {
+                                    setImageFile(e.target.files?.[0] ?? null);
+                                    setImageError(null);
+                                  }}
+                                  className="w-full text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-500">
+                                  Description (optional — shown if the image can&apos;t load)
+                                </label>
+                                <input
+                                  type="text"
+                                  value={imageAlt}
+                                  onChange={(e) => setImageAlt(e.target.value)}
+                                  placeholder="e.g. Our new logo"
+                                  className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-gray-500 focus:outline-none"
+                                />
+                              </div>
+                              {imageError && <p className="text-sm text-red-600">{imageError}</p>}
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleInsertImage(type)}
+                                  disabled={!imageFile || imageUploading}
+                                  className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                                >
+                                  {imageUploading ? "Uploading..." : "Insert"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={closeImageForm}
+                                  className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {sectionErrors[type] && (
                         <p className="text-sm text-red-600">{sectionErrors[type]}</p>
@@ -314,7 +445,7 @@ export default function BuilderPage() {
                       <div className="flex gap-2">
                         <button
                           onClick={() => handleSave(type)}
-                          disabled={savingType === type || !hasChanges}
+                          disabled={savingType === type || deletingType === type || !hasChanges}
                           className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                         >
                           {savingType === type ? "Saving..." : "Save Section"}
@@ -322,9 +453,10 @@ export default function BuilderPage() {
                         {section.id && (
                           <button
                             onClick={() => handleDelete(type)}
-                            className="rounded-md border border-red-200 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                            disabled={deletingType === type || savingType === type}
+                            className="rounded-md border border-red-200 px-4 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
                           >
-                            Delete Section
+                            {deletingType === type ? "Deleting..." : "Delete Section"}
                           </button>
                         )}
                       </div>
@@ -360,6 +492,11 @@ export default function BuilderPage() {
               className="h-[500px] w-full border-0"
             />
           </div>
+          <p className="mt-2 text-xs text-gray-400">
+            Every send also gets a &ldquo;Hi [name],&rdquo; greeting at the top. The
+            unsubscribe line in the footer is added automatically &mdash; each
+            subscriber gets their own link.
+          </p>
         </div>
       </div>
     </div>
