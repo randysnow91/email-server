@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { constantTimeEqual } from "@/lib/adminAuth";
 
 // Paths that must stay reachable without the admin secret, even though
 // they live under a protected prefix below.
@@ -12,7 +13,8 @@ export function proxy(request: NextRequest) {
   }
 
   const cookie = request.cookies.get("admin_session")?.value;
-  const isAuthed = !!cookie && cookie === process.env.ADMIN_ACCESS_SECRET;
+  const secret = process.env.ADMIN_ACCESS_SECRET ?? "";
+  const isAuthed = !!cookie && secret.length > 0 && constantTimeEqual(cookie, secret);
 
   if (isAuthed) {
     return NextResponse.next();

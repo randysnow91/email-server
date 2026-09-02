@@ -26,7 +26,10 @@ export default function AdminLoginPage() {
       router.push("/admin");
       router.refresh();
     } else {
-      setError("Incorrect secret. Try again.");
+      // Surface the server's message (e.g. the rate-limit notice), falling
+      // back to a generic one.
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Incorrect secret. Try again.");
     }
   }
 
