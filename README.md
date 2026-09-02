@@ -5,22 +5,26 @@ an admin composes an email from reusable sections, previews it, sends a test to
 themselves, then sends to the whole list. Built one milestone at a time as a
 learning project.
 
-**Status:** V1 in progress — M0–M6 complete, M7 (image support + final polish)
-remaining. See [`docs/V1_BUILD-SPEC.md`](docs/V1_BUILD-SPEC.md) for the full
-milestone history and the reasoning behind every decision.
+**Status:** V1 complete (M0–M7). See
+[`docs/V1_BUILD-SPEC.md`](docs/V1_BUILD-SPEC.md) for the full milestone history
+and the reasoning behind every decision.
 
 ## Features
 
 - **Public subscribe / unsubscribe** — no login. Unsubscribe links are
-  per-recipient and tokenised; people can resubscribe themselves.
+  per-recipient and tokenised; people can resubscribe themselves. Email domains
+  are DNS-checked at signup so dead domains and typos are rejected.
 - **Email builder** — eight section types (subject, header, title, about, main
-  body, ad, editor's note, footer), a live preview, and an "Insert Link"
-  helper. Sections are stored as raw HTML.
+  body, ad, editor's note, footer), a live preview, and **Insert Link / Insert
+  Image** helpers (images upload to Supabase Storage). Sections are stored as
+  raw HTML.
 - **Sending via Mailgun** — batch send with per-recipient personalisation, so
   no subscriber ever sees another's address, and 1,000 recipients go out in
-  one API call.
+  one API call. Each send carries a "Hi [name]," greeting and a per-recipient
+  unsubscribe link in the footer.
 - **Send workflow** — preview, recipient count, test send, a confirmation step,
-  and a result summary with per-error detail.
+  and a result summary (counts what Mailgun *accepted* — bounce tracking is a
+  later release).
 - **Admin dashboard** — overview, one consistent top navigation, a full send
   history, and multiple newsletters under one admin with a switcher.
 
@@ -41,10 +45,11 @@ Public pages  ── /subscribe, /unsubscribe          (no auth)
 Admin pages   ── /admin/*                           (shared-secret gate)
 API routes    ── /api/public/*    subscribe / unsubscribe
                  /api/manager/*   subscribers, newsletters
-                 /api/builder/*   sections, preview
+                 /api/builder/*   sections, preview, images
                  /api/sender/*    send, test-send, history
                  /api/admin/*     login / logout
-Supabase      ── email_servers, subscribers, email_sections, send_history
+Supabase      ── Postgres: email_servers, subscribers, email_sections, send_history
+                 Storage:  newsletter-images (public bucket, auto-created)
 ```
 
 - Admin access is a single shared secret (`ADMIN_ACCESS_SECRET`) checked by

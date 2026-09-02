@@ -1,6 +1,6 @@
 # Claude Code Build Spec — Email Server
 
-**Status:** v1.7 — M0, M1, M2, M3, M4, M5, and M6 complete, READY FOR M7  
+**Status:** v1.8 — **V1 COMPLETE.** M0–M7 all built, verified locally, deployed to Render, and phone-tested.  
 **Derived from:** `Email_Server_R1_SRD.md` (the requirements document — read it first) + planning review (2026-08-27)  
 **Audience:** Claude Code (the coding agent) + the builder (product owner)
 
@@ -14,6 +14,7 @@
 | v1.5 | 2026-09-01 | M4 built, verified locally, deployed to Render, and phone-tested. Almost pure front-end work — M3 already shipped and tested the entire sender backend, so M4 added the `/admin/send` workflow page, wired send history into the dashboard, and added navigation. Documented the send-workflow UI approach (§4.12): in-page confirmation panel instead of a native `confirm()` dialog, client-side preview reusing `composeEmail()`, and the dashboard as the one server-rendered admin page (forced dynamic). No new API routes, no schema changes, no new gotchas. |
 | v1.6 | 2026-09-01 | M5 built, verified locally, deployed to Render, and phone-tested. **Scope change:** self-service unsubscribe was pulled forward from R3 into M5 (preferences stays in R3) — the data model already had `unsubscribed`, real sends were going out with no opt-out link (a compliance and deliverability gap), and both unsubscribe and preferences need the same token mechanism, so building it once now makes preferences a cheap R3 add. §4.4 rewritten to reflect this; new §4.13 documents the M5 approach (a `(public)` route group with its own chrome, click-to-confirm unsubscribe, per-recipient footer link via a Mailgun variable). Schema change: `subscribers.unsubscribe_token` (migration `001_m5_unsubscribe_token.sql`). One UX fix found in testing: the M1 "Show unsubscribed" checkbox was additive and made a re-subscribed person look duplicated — replaced with an Active / Unsubscribed / All filter. |
 | v1.7 | 2026-09-01 | M6 built, verified locally, deployed to Render, and phone-tested. No schema changes — `email_servers` already existed. New §4.14 documents the M6 approach: the active newsletter is an `email_server_id` cookie (`getActiveEmailServerId()`), the top nav is the single navigation on every admin screen (the dashboard's duplicate quick-link buttons and the Builder's "Go to Send" button were both removed after review), the switcher does a full page reload so client-rendered pages re-scope, and newsletters can be listed/created/switched but not edited/deleted/deactivated in V1. New routes: `GET/POST /api/manager/accounts`, `POST /api/manager/accounts/select`. §4.7 and §4.8 closed out. |
+| v1.8 | 2026-09-02 | **M7 built and verified end-to-end on the live site (real image in a real inbox) — V1 is complete.** New §4.15 documents M7: image upload (auto-provisioned public Supabase Storage bucket + an "Insert Image" helper), the unsubscribe line moved into the footer section of `composeEmail()` (one bordered block, centered, visible in the preview), MX/A DNS validation of email domains at every entry point (`src/lib/emailDomain.ts`), and "Delivered" relabelled "Accepted" throughout to stop overstating what a Mailgun 200 means. Two fixes made between M6 and M7 while prepping the repo to go public: login rate limiting + constant-time secret comparison (§4.1), and a Render reverse-proxy redirect bug — `request.url` is the internal `localhost:10000`, so logout/login redirects must be built from `NEXT_PUBLIC_APP_URL` (§7.8). README rewritten from the create-next-app boilerplate. |
 
 > **How to use this document.**
 > The SRD says *what* and *why*. This spec says *how, with what, and in what order*.
@@ -134,6 +135,19 @@ staying well short of a full auth system.
 weaker than per-user auth), and it doesn't give role-based access beyond "has the
 secret or doesn't." Acceptable for a single-operator V1; if you'd rather skip even
 this while the app only runs locally or at an unguessable URL, say so and we'll drop it.
+
+**Hardening (added while prepping the repo to go public):**
+- **Constant-time comparison.** The secret is compared with
+  `constantTimeEqual()` (`src/lib/adminAuth.ts`) in *both* the login route and
+  `src/proxy.ts` — a plain `===` short-circuits on the first wrong character and
+  leaks, via timing, how much of a guess was right. Written without
+  `node:crypto` so it also runs in the Edge runtime the proxy uses.
+- **Login rate limiting.** `src/lib/rateLimit.ts` — 10 failed attempts from one
+  IP in 10 minutes locks out further tries (429 + `Retry-After`), cleared on a
+  successful login. The 256-bit secret already makes brute force infeasible;
+  this is defense in depth and stops the endpoint being used to hammer the
+  server. In-memory (fine for one always-on Render instance; move to Redis if
+  it ever scales out).
 
 **R4** replaces this entirely with real Supabase Auth + RLS for multiple users.
 
@@ -401,6 +415,52 @@ navigation + a working switcher "if more than one exists." The switcher needs
 a way to reach >1 newsletter to be usable at all, so a minimal create form
 (name + description) is in scope; everything past that isn't. No schema change
 — `email_servers` already had `name`, `description`, `created_at`.
+
+### 4.15 M7: images, footer unsubscribe, domain validation, honest delivery status
+
+**Image upload** (`src/lib/imageStorage.ts`, `POST /api/builder/images`):
+- One **public** Supabase Storage bucket, `newsletter-images` — public because
+  email clients fetch `<img>` sources anonymously (no way to hand them a signed
+  URL). **Auto-created on first upload** (like the default newsletter, §4.7),
+  so there's no dashboard setup step.
+- 5 MB cap; PNG / JPEG / GIF / WebP. Files stored under a random UUID name.
+- Builder gets a **"+ Insert Image"** helper alongside "+ Insert Link" on every
+  multiline section: pick a file + optional alt text → upload → a styled
+  `<img>` tag is dropped at the cursor (`display:block`, `max-width:100%`).
+  No image resizing, and **no delete UI** — see §11.
+
+**Unsubscribe line moved into the footer** (`composeEmail()`):
+- Previously appended as a detached block after the whole body (its own border
+  rule — looked orphaned). Now it's the tail of the footer region: the admin's
+  Footer content (if any) then the unsubscribe line, centered, inside **one**
+  bordered block. Rendered even when there's no Footer section — every real
+  send needs a working opt-out.
+- `composeEmail()` takes an `unsubscribeUrl` option: the live preview leaves it
+  unset (renders `#`, so the line is *visible* in the preview now); the send
+  passes Mailgun's `%recipient.unsubscribe_url%` token. `withUnsubscribeFooter()`
+  is gone. This slightly revises §4.11's "same output for everyone" note — the
+  composer now takes one per-send parameter, but it's a template token, not a
+  resolved per-subscriber value, so the function stays pure and the preview
+  still matches structurally.
+
+**Email domain validation** (`src/lib/emailDomain.ts`):
+- `domainCanReceiveEmail()` does an **MX (then A) DNS lookup** — a syntax regex
+  can't tell that `qqq.qqqqqqq` or `gmail.con` isn't a real mail domain.
+  Enforced at every entry point: `/api/public/subscribe`, admin add-subscriber,
+  and `/api/sender/test-send`. **Not** on the bulk-send path (N lookups would
+  blow NFR-1.1; subscribers are already validated at the door).
+- **Fails open:** a DNS error (timeout, resolver hiccup) lets the address
+  through — a transient network problem must not block a real signup. Only a
+  definitive "no mail route for this domain" rejects.
+
+**"Delivered" → "Accepted":**
+- A Mailgun `200` means *accepted for delivery*, not *delivered to an inbox*. A
+  bad address is accepted, then bounces asynchronously — and V1 has no bounce
+  tracking (that's Mailgun webhooks, R3). Calling `success_count` "delivered"
+  overstated it. Relabelled **"Accepted" / "Rejected"** in the send result, the
+  history table, and the dashboard, each with a one-line note.
+
+**No schema change in M7.** New route: `POST /api/builder/images`.
 
 ---
 
@@ -768,6 +828,25 @@ real, strict provider. **Any Mailgun sending domain in this project should
 get the full SPF + DKIM + DMARC + MX set from day one**, not just the first
 three.
 
+### 7.8 Gotcha: behind Render's proxy, `request.url` is the internal address
+
+Found on the live site after M6: clicking **Log out** sent the browser to
+`https://localhost:10000/admin/login` ("this site can't be reached"). Render
+runs the app on an internal port and puts a reverse proxy in front of it, so
+inside a route handler or the middleware, `request.url` /
+`request.nextUrl.origin` is `http://localhost:10000/...`, not the public
+domain. Both redirects that mattered — the logout route and the middleware's
+"not authenticated" redirect — were building their target from `request.url`.
+
+**Fix:** build those redirects against `appOrigin()` (`src/lib/appUrl.ts`,
+which reads `NEXT_PUBLIC_APP_URL` — already set to the live URL for unsubscribe
+links). A relative `Location` works in a route handler but **not** in
+middleware (Next re-parses it as absolute and throws), so middleware needs the
+absolute URL. Logout returns `303` so the browser follows it with `GET`.
+
+Any future server-built redirect or absolute-link generation must use
+`appOrigin()` / forwarded headers, never `request.url`, on Render.
+
 ---
 
 ## 8. Milestones & Acceptance Criteria
@@ -962,37 +1041,38 @@ workflow end-to-end (now including an image) and polish.
 > M1 — see §9's update note. M7 is real feature work (image support) plus
 > final polish and full-workflow verification, not "first deploy."
 
-**Tasks:**
-1. **Image support in the Email Builder** (do this first, before the
-   full-workflow retest below):
-   - Add a Supabase Storage bucket for uploaded images.
-   - Add an "Insert Image" helper per section, mirroring the Insert Link
-     helper from M2 (§4.10) — upload a file, get back a URL, insert the
-     resulting `<img>` tag at the cursor. No hand-written HTML required.
-   - In the meantime, admins can already embed an image by hand-pasting
-     `<img src="...">` pointing at any externally-hosted image (e.g. a
-     WordPress media library URL) — the section content is raw HTML
-     already, so this isn't blocked, just not yet convenient.
-2. Test full workflow on live site (enter admin secret → dashboard →
-   compose an email that includes an image → test send → send → confirm
-   subscriber received it, image included).
-3. Fix any bugs discovered in live testing.
-4. Add form validation polish (clear error messages, disabled states).
-5. Test on real mobile device (not just dev tools).
-6. Document any remaining known issues.
+**Tasks:** (all done — see §4.15)
+1. **Image support in the Email Builder** — public `newsletter-images`
+   Supabase Storage bucket (auto-provisioned), `POST /api/builder/images`,
+   and a "+ Insert Image" helper mirroring Insert Link (§4.10 / §4.15).
+2. Full-workflow test on the live site with an image — done.
+3. Fixes found along the way: the footer unsubscribe line looked orphaned
+   (moved into the footer section, §4.15); test-send accepted nonsense
+   domains and reported them "delivered" (DNS validation + "Accepted"
+   relabel, §4.15).
+4. Validation polish — DNS domain check, disabled/loading states, inline
+   errors replacing `alert()`, Insert Link `https://` prefix (§4.15).
+5. Tested on a real phone against the Render deployment.
+6. Known issues documented in §11.
 
 **Acceptance Criteria:**
-- [ ] Admin can upload an image and insert it into a section without
-      hand-writing HTML.
-- [ ] Sent emails correctly display the embedded image.
-- [ ] App is deployed and accessible at a public URL.
-- [ ] Full workflow works end-to-end on live site (subscribe → compose with
-      an image → test send → send).
-- [ ] Mailgun successfully delivers emails to real inboxes.
-- [ ] No unhandled errors in browser console or Render logs.
-- [ ] Tested on a real mobile device (phone or tablet).
-- [ ] Git history is clean (commits per milestone, descriptive messages).
-- [ ] README.md documents how to set up, deploy, and use the app.
+- [x] Admin can upload an image and insert it into a section without
+      hand-writing HTML — "+ Insert Image" helper (§4.15).
+- [x] Sent emails correctly display the embedded image — verified in a real
+      inbox.
+- [x] App is deployed and accessible at a public URL (Render, since M1).
+- [x] Full workflow works end-to-end on the live site (subscribe → compose
+      with an image → test send → send) — verified.
+- [x] Mailgun successfully delivers emails to real inboxes — verified
+      (delivery status is now labelled "Accepted", §4.15, since a Mailgun
+      200 isn't proof of inbox delivery).
+- [x] No unhandled errors in browser console or Render logs during the
+      full-workflow test.
+- [x] Tested on a real mobile device.
+- [x] Git history is clean — one or more descriptive commits per milestone,
+      each tagged `M0:`…`M7:`.
+- [x] README.md documents setup, deployment, and use (rewritten from the
+      create-next-app boilerplate in M7).
 
 ---
 
@@ -1047,7 +1127,7 @@ workflow end-to-end (now including an image) and polish.
 - **Weekly emails:** add preference for weekly sends; compose separate weekly email.
 - ~~**Self-service unsubscribe page**~~ — **done in V1 (M5, §4.13):** `/unsubscribe` with a per-subscriber token link in every send's footer. R3 only needs to add engagement-webhook wiring if desired.
 - **Self-service preferences page:** public `/preferences` page with auto-preference-update link in email footer (still V1-excluded — see §4.4). The M5 token mechanism (`subscribers.unsubscribe_token`, §4.13) is the foundation this reuses.
-- **Engagement tracking:** hook into Mailgun webhooks to log opens, clicks (basic analytics).
+- **Engagement & delivery tracking:** hook into Mailgun webhooks to log delivered / bounced / complained (so the send report reflects real inbox delivery, not just API acceptance — see §4.15), plus opens and clicks.
 
 ### R4: Multi-User
 
@@ -1127,7 +1207,26 @@ workflow end-to-end (now including an image) and polish.
   not rate-limited. Acceptable for a low-traffic single-operator V1; add a
   limiter (or a CAPTCHA on subscribe) if abuse shows up. Unsubscribe is
   idempotent and only ever affects the single row its token points at.
+- **The admin login IS rate-limited** as of the M6→M7 hardening pass (§4.1) —
+  this note is about the public endpoints only.
+
+### Images: No Management, No Resizing (M7)
+
+- Uploaded images stay in the `newsletter-images` bucket forever. There's no
+  "delete image" UI, and deleting a section doesn't remove images it used.
+  Fine at V1 scale (a few MB); image management is post-V1.
+- No server-side resizing or optimisation — the admin uploads a sensibly-sized
+  file. The inserted `<img>` is capped at `max-width:100%` so it won't overflow.
+
+### No Bounce / Delivery Tracking (M7)
+
+- The send counts what Mailgun **accepted** (`200` from the API), not what
+  reached an inbox. A bad address is accepted then bounces asynchronously and
+  V1 never sees it. The UI says "Accepted", not "Delivered", to be honest about
+  this (§4.15). Real delivery/bounce tracking needs Mailgun webhooks — R3.
+- Domain validation (`src/lib/emailDomain.ts`, §4.15) catches dead domains at
+  signup/test-send, but **fails open**: a DNS timeout lets the address through.
 
 ---
 
-*End of Build Spec v1.7*
+*End of Build Spec v1.8 — V1 complete.*
