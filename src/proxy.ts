@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { constantTimeEqual } from "@/lib/adminAuth";
+import { appOrigin } from "@/lib/appUrl";
 
 // Paths that must stay reachable without the admin secret, even though
 // they live under a protected prefix below.
@@ -26,7 +27,10 @@ export function proxy(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return NextResponse.redirect(new URL("/admin/login", request.url));
+  // Redirect against appOrigin(), not request.url: behind Render's proxy the
+  // latter is the internal address (localhost:10000). Middleware requires an
+  // absolute Location, so a relative path won't do here.
+  return NextResponse.redirect(new URL("/admin/login", appOrigin()));
 }
 
 // Everything under /admin and the admin API groups is gated. Public routes
