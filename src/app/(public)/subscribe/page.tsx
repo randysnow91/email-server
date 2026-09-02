@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { isValidEmail } from "@/lib/validation";
 
 export default function SubscribePage() {
   const [email, setEmail] = useState("");
@@ -11,6 +12,10 @@ export default function SubscribePage() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!isValidEmail(email)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     setSuccess(null);
@@ -84,7 +89,7 @@ export default function SubscribePage() {
 
         <button
           type="submit"
-          disabled={submitting || !email}
+          disabled={submitting || !email.trim()}
           className="w-full rounded-md bg-gray-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
         >
           {submitting ? "Subscribing..." : "Subscribe"}

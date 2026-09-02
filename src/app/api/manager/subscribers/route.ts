@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { getActiveEmailServerId } from "@/lib/emailServer";
 import { isValidEmail } from "@/lib/validation";
+import { domainCanReceiveEmail } from "@/lib/emailDomain";
 
 const DEFAULT_LIMIT = 50;
 
@@ -52,6 +53,13 @@ export async function POST(request: NextRequest) {
 
   if (!isValidEmail(email)) {
     return NextResponse.json({ error: "A valid email address is required." }, { status: 400 });
+  }
+
+  if (!(await domainCanReceiveEmail(email))) {
+    return NextResponse.json(
+      { error: "That email domain can't receive mail - check for a typo." },
+      { status: 400 }
+    );
   }
 
   const emailServerId = body.email_server_id ?? (await getActiveEmailServerId());

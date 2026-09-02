@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { composeEmail, type SectionType } from "@/lib/composeEmail";
+import { isValidEmail } from "@/lib/validation";
 
 type SendResult = {
   recipient_count: number;
@@ -122,7 +123,10 @@ export default function SendPage() {
 
   async function handleTestSend() {
     const address = testEmail.trim();
-    if (!address) return;
+    if (!isValidEmail(address)) {
+      setTestMessage({ ok: false, text: "Enter a valid email address." });
+      return;
+    }
     setTesting(true);
     setTestMessage(null);
     try {
@@ -140,7 +144,10 @@ export default function SendPage() {
       if (!res.ok || data.success === false) {
         throw new Error(data.error ?? "Test send failed.");
       }
-      setTestMessage({ ok: true, text: `Test email sent to ${address}.` });
+      setTestMessage({
+        ok: true,
+        text: `Test sent to ${address} — check your inbox (and spam).`,
+      });
       loadHistory();
     } catch (err) {
       setTestMessage({
@@ -218,8 +225,8 @@ export default function SendPage() {
               />
             </div>
             <p className="mt-2 text-xs text-gray-400">
-              Each subscriber&apos;s copy is personalized with a &ldquo;Hi [name],&rdquo;
-              greeting above this content.
+              Each subscriber&apos;s copy adds a &ldquo;Hi [name],&rdquo; greeting at the
+              top and their own unsubscribe link in the footer.
             </p>
           </div>
 
@@ -252,21 +259,27 @@ export default function SendPage() {
               <p className="mb-2 text-xs text-gray-500">
                 Delivers one copy to this address. Not counted as a real send.
               </p>
-              <input
-                type="email"
-                value={testEmail}
-                onChange={(e) => setTestEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={handleTestSend}
-                disabled={testing || !testEmail.trim() || mainBodyEmpty}
-                className="mt-2 w-full rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleTestSend();
+                }}
               >
-                {testing ? "Sending test..." : "Send Test"}
-              </button>
+                <input
+                  type="email"
+                  value={testEmail}
+                  onChange={(e) => setTestEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={testing || !testEmail.trim() || mainBodyEmpty}
+                  className="mt-2 w-full rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {testing ? "Sending test..." : "Send Test"}
+                </button>
+              </form>
               {testMessage && (
                 <p
                   className={`mt-2 text-sm ${
@@ -331,10 +344,15 @@ export default function SendPage() {
               {result && (
                 <div className="mt-3 rounded-md border border-gray-200 bg-white p-3 text-sm">
                   <p className="font-medium text-gray-900">Send complete</p>
-                  <p className="text-green-700">{result.success_count} delivered</p>
+                  <p className="text-green-700">{result.success_count} accepted by Mailgun</p>
                   {result.failed_count > 0 && (
-                    <p className="text-red-600">{result.failed_count} failed</p>
+                    <p className="text-red-600">{result.failed_count} rejected</p>
                   )}
+                  <p className="mt-1 text-xs text-gray-400">
+                    &ldquo;Accepted&rdquo; means handed to Mailgun for delivery. A bad
+                    address can still bounce afterwards &mdash; bounce tracking isn&apos;t
+                    in this version.
+                  </p>
                   {result.errors.length > 0 && (
                     <ul className="mt-1 list-disc space-y-0.5 pl-5 text-red-600">
                       {result.errors.map((e, i) => (
@@ -370,8 +388,8 @@ export default function SendPage() {
                   <th className="px-4 py-2 font-medium">When</th>
                   <th className="px-4 py-2 font-medium">Type</th>
                   <th className="px-4 py-2 font-medium">Recipients</th>
-                  <th className="px-4 py-2 font-medium">Delivered</th>
-                  <th className="px-4 py-2 font-medium">Failed</th>
+                  <th className="px-4 py-2 font-medium">Accepted</th>
+                  <th className="px-4 py-2 font-medium">Rejected</th>
                 </tr>
               </thead>
               <tbody>

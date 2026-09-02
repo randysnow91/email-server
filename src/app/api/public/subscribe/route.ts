@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { getDefaultEmailServerId } from "@/lib/emailServer";
 import { isValidEmail } from "@/lib/validation";
+import { domainCanReceiveEmail } from "@/lib/emailDomain";
 
 // Public, unauthenticated (not listed in proxy.ts's matcher). Handles the
 // /subscribe form. Deliberately returns no subscriber data - just a
@@ -13,6 +14,13 @@ export async function POST(request: NextRequest) {
   if (!isValidEmail(email)) {
     return NextResponse.json(
       { error: "Please enter a valid email address." },
+      { status: 400 }
+    );
+  }
+
+  if (!(await domainCanReceiveEmail(email))) {
+    return NextResponse.json(
+      { error: "That email domain doesn't look right - please check it." },
       { status: 400 }
     );
   }

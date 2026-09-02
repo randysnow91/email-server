@@ -124,7 +124,7 @@ export default function NewslettersPage() {
                   <button
                     type="button"
                     onClick={() => handleSwitch(account.id)}
-                    disabled={switchingId === account.id}
+                    disabled={switchingId !== null}
                     className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                   >
                     {switchingId === account.id ? "Switching..." : "Switch to"}
@@ -143,16 +143,18 @@ export default function NewslettersPage() {
             type="text"
             required
             value={name}
+            disabled={creating}
             onChange={(e) => setName(e.target.value)}
             placeholder="Name (e.g. Dog Rescue)"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none"
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none disabled:opacity-50"
           />
           <input
             type="text"
             value={description}
+            disabled={creating}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Description (optional)"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none"
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-base focus:border-gray-500 focus:outline-none disabled:opacity-50"
           />
           {createError && <p className="text-sm text-red-600">{createError}</p>}
           <button

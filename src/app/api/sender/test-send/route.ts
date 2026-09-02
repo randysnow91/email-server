@@ -3,12 +3,20 @@ import { getActiveEmailServerId } from "@/lib/emailServer";
 import { composeForSend, logSendHistory, MissingMainBodyError } from "@/lib/sendEmail";
 import { sendBatch } from "@/lib/mailgun";
 import { isValidEmail } from "@/lib/validation";
+import { domainCanReceiveEmail } from "@/lib/emailDomain";
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
 
   if (!isValidEmail(body.test_email)) {
     return NextResponse.json({ error: "A valid test_email is required." }, { status: 400 });
+  }
+
+  if (!(await domainCanReceiveEmail(body.test_email))) {
+    return NextResponse.json(
+      { error: "That email domain can't receive mail - check for a typo." },
+      { status: 400 }
+    );
   }
 
   const emailServerId = body.email_server_id ?? (await getActiveEmailServerId());

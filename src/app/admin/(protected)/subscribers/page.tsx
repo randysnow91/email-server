@@ -43,6 +43,9 @@ export default function SubscribersPage() {
   const [editError, setEditError] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
   const loadSubscribers = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
@@ -129,12 +132,18 @@ export default function SubscribersPage() {
 
   async function handleDelete(subscriber: Subscriber) {
     if (!confirm(`Remove ${subscriber.email} from the list? This can't be undone.`)) return;
-    const res = await fetch(`/api/manager/subscribers/${subscriber.id}`, { method: "DELETE" });
-    if (res.ok) {
+    setDeletingId(subscriber.id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/manager/subscribers/${subscriber.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        throw new Error((await res.json()).error ?? "Failed to remove subscriber.");
+      }
       await loadSubscribers();
-    } else {
-      const data = await res.json();
-      alert(data.error ?? "Failed to delete subscriber.");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to remove subscriber.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -189,7 +198,7 @@ export default function SubscribersPage() {
           </div>
           <button
             type="submit"
-            disabled={adding || !newEmail}
+            disabled={adding || !newEmail.trim()}
             className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
             {adding ? "Adding..." : "Add Subscriber"}
@@ -220,6 +229,9 @@ export default function SubscribersPage() {
 
       {loadError && (
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>
+      )}
+      {actionError && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</p>
       )}
 
       {loading ? (
@@ -265,7 +277,8 @@ export default function SubscribersPage() {
                     </button>
                     <button
                       onClick={() => setEditingId(null)}
-                      className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700"
+                      disabled={savingEdit}
+                      className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:opacity-50"
                     >
                       Cancel
                     </button>
@@ -296,15 +309,17 @@ export default function SubscribersPage() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => startEdit(subscriber)}
-                      className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+                      disabled={deletingId === subscriber.id}
+                      className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                     >
                       Edit
                     </button>
                     <button
                       onClick={() => handleDelete(subscriber)}
-                      className="rounded-md border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+                      disabled={deletingId === subscriber.id}
+                      className="rounded-md border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
                     >
-                      Delete
+                      {deletingId === subscriber.id ? "Removing..." : "Delete"}
                     </button>
                   </div>
                 </div>

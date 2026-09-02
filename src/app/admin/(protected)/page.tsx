@@ -122,9 +122,9 @@ export default async function AdminDashboardPage() {
                   )}
                 </p>
                 <p className="text-gray-500">
-                  {row.success_count ?? 0} delivered
+                  {row.success_count ?? 0} accepted
                   {row.failed_count ? (
-                    <span className="text-red-600"> · {row.failed_count} failed</span>
+                    <span className="text-red-600"> · {row.failed_count} rejected</span>
                   ) : null}
                 </p>
               </li>

@@ -48,6 +48,8 @@ export default function HistoryPage() {
         <h1 className="text-2xl font-semibold text-gray-900">Send History</h1>
         <p className="text-sm text-gray-500">
           Every send and test send for the active newsletter, most recent first.
+          &ldquo;Accepted&rdquo; = handed to Mailgun; bounces afterwards aren&apos;t
+          tracked in this version.
         </p>
       </div>
 
@@ -67,8 +69,8 @@ export default function HistoryPage() {
                 <th className="px-4 py-2 font-medium">When</th>
                 <th className="px-4 py-2 font-medium">Type</th>
                 <th className="px-4 py-2 font-medium">Recipients</th>
-                <th className="px-4 py-2 font-medium">Delivered</th>
-                <th className="px-4 py-2 font-medium">Failed</th>
+                <th className="px-4 py-2 font-medium">Accepted</th>
+                <th className="px-4 py-2 font-medium">Rejected</th>
               </tr>
             </thead>
             <tbody>
