@@ -1115,11 +1115,17 @@ workflow end-to-end (now including an image) and polish.
 
 ## 10. Upgrade Paths (Post-V1, R2+)
 
+> **The R2/R3 content-pipeline design is now written up in detail:**
+> [`docs/CONTENT-PIPELINE-ARCHITECTURE.md`](CONTENT-PIPELINE-ARCHITECTURE.md)
+> (three services, the Template/Issue/snapshot data model, the block model,
+> human-in-the-loop, daily + weekly flows). The bullets below are the original
+> sketch; that document supersedes them.
+
 ### R2: Content Automation & Scheduling
 
-- **Content Builder app:** separate Next.js app that generates daily content (searches, summarizes, PM perspective).
-- **Conductor agent:** orchestrates Content Builder → Email Server send.
-- **Scheduled sends:** Render cron job triggers send at specified time (e.g., 8 AM daily).
+- **Content Builder:** a stateless generator service (calls the Anthropic API) that produces a structured **Issue** — see the architecture doc.
+- **Conductor:** the orchestrator — scheduled, coordinates Content Builder → EmailServer, never waits on the human.
+- **Scheduled sends + auto-send:** Render cron; the daily auto-sends after a review window if not approved, the weekly is always manual.
 - **Message queuing:** async/background job support (Render Background Workers) so send doesn't block the request.
 
 ### R3: Weekly & Subscriber Features
