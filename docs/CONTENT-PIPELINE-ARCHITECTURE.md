@@ -1,9 +1,9 @@
 # Content Pipeline Architecture — Daily & Weekly Newsletter Automation
 
-**Status:** Design document. Not yet a build spec — no milestones or acceptance
-criteria. It captures the architecture agreed in the 2026-09-08 design
-discussion, to be turned into an `R2_BUILD-SPEC.md` (with milestones) when
-build starts.
+**Status:** Design document — **finalized 2026-09-10.** Not yet a build spec
+(no milestones or acceptance criteria); to be turned into an
+`R2_BUILD-SPEC.md` when build starts. All the open questions from v0.1 are now
+decided; see §15.
 
 **Covers:** SRD R2 (Content Builder app, Conductor/orchestrator, scheduled
 sends) and the R3 weekly-email + subscription-preference work, which the
@@ -16,6 +16,7 @@ exists and is deployed.
 | Version | Date | Summary |
 |---------|------|---------|
 | v0.1 | 2026-09-08 | Initial architecture from the design discussion. |
+| v0.2 | 2026-09-10 | Finalized: all v0.1 open questions decided (§15). Added §16 (repository & infrastructure layout — 3 repos, 1 Supabase, 3 Render services) and §17 (running Claude Code per repo). Daily `send_after` pinned to 10:00 AM. |
 
 ---
 
@@ -219,12 +220,12 @@ Conductor (scheduled, ~6:00 AM)
   │       │  write the closing thought
   │       ◀─ returns  { type: "daily", blocks: [...] }   (JSON, not HTML)
   │
-  ├─▶ EmailServer:  POST Issue as draft   (status: draft, send_after: 9:00 AM)
+  ├─▶ EmailServer:  POST Issue as draft   (status: draft, send_after: 10:00 AM)
   │       └─ EmailServer emails the operator a review link
   │
   └─ Conductor exits.  No waiting.
 
-Operator (some time before 9:00 AM)          ── normal path
+Operator (some time before 10:00 AM)         ── normal path
   └─▶ EmailServer: review (preview = Template + Issue)
         ├─ edit blocks if needed
         └─ Approve  ──▶ send ──▶ snapshot saved ──▶ Issue: sent
@@ -244,10 +245,11 @@ Send filtering: subscribers with preference `daily` or `both` (§10).
 Conductor (scheduled, Friday ~2:00 PM)
   │
   ├─▶ EmailServer:  GET the week's sent daily Issues for newsletter X
-  │                 (and/or their send snapshots — what actually went out)
+  │                 (their send snapshots — what actually went out)
   │
-  ├─▶ Content Builder:  "build a weekly Issue for newsletter X from this week's content"
+  ├─▶ Content Builder:  "build a weekly Issue for X" + the week's content in the request body
   │       │  synthesize — format is Content Builder's call (best-of / trends / hybrid)
+  │       │  Content Builder never calls EmailServer; the Conductor hands it the material
   │       ◀─ returns  { type: "weekly", blocks: [...] }
   │
   ├─▶ EmailServer:  POST Issue as draft   (status: draft — NO send_after; §9)
@@ -274,9 +276,10 @@ Send filtering: subscribers with preference `weekly` or `both`.
 - **Notification:** when EmailServer receives a draft Issue, it emails the
   operator a review link. EmailServer already has Mailgun; the Conductor
   doesn't need to know how the operator is reached.
-- **Auto-send applies to the daily only.** Issue gets a `send_after` (e.g.
-  generated 6:00 AM, `send_after` 9:00 AM — a 3-hour review window). A cron
-  check sends any `draft` past its `send_after` that isn't `skipped`.
+- **Auto-send applies to the daily only.** Issue is generated ~6:00 AM with
+  `send_after` = **10:00 AM** — a ~4-hour review window. A cron check sends any
+  `draft` past its `send_after` that isn't `skipped`. ("If it hasn't gone out
+  by 10, send it.")
 - **The weekly is always manually approved** — lower frequency, higher stakes,
   no `send_after`.
 - **Guardrails:**
@@ -312,9 +315,10 @@ as a **service that calls the Anthropic API** (Messages API with the web-search
 tool, or the Agent SDK) — not as a scheduled Claude Code skill. This is the
 more portable resume story and gives full control over the pipeline.
 
-Suggested agents (each a distinct responsibility; whether they are genuinely
-separate API calls/contexts coordinated by a small local orchestrator, or
-tools in one loop, is a build-time call — separate is more instructive):
+**Decided:** the four agents below are **genuinely separate** — each its own
+API call / context, coordinated by a small in-service orchestrator (not one
+loop with tools). More moving parts, but it's the point of the exercise and
+the better portfolio story.
 
 | Agent | Job |
 |---|---|
@@ -348,13 +352,17 @@ in production.
 
 ## 13. Deployment shape
 
-- **EmailServer** — unchanged (Render web service).
-- **Content Builder** — a second Render service (~$7/mo) exposing one endpoint,
-  or a Render background worker. Calls the Anthropic API.
-- **Conductor** — a Render cron job (or a scheduled function). Small.
-- No new Supabase project required — Content Builder is stateless; everything
-  persists in EmailServer's existing database (plus new `issues` and template
-  changes).
+See §16 for the full repo + infrastructure layout. In brief:
+
+- **EmailServer** — unchanged (Render web service; its existing Supabase project).
+- **Content Builder** — a second Render web service, **free tier is fine** (only
+  hit twice a day; a cold start doesn't matter for a job that runs for minutes).
+  One endpoint. Calls the Anthropic API. No database.
+- **Conductor** — a Render **Cron Job** (Render's scheduled-job service type).
+  Runs, does its handoffs, exits. No database.
+- **No new Supabase project.** Content Builder and Conductor are stateless;
+  everything persists in EmailServer's existing database (plus the new `issues`
+  table and template changes).
 
 ---
 
@@ -372,30 +380,127 @@ in production.
 
 ---
 
-## 15. Open questions — decide at build time
+## 15. Decisions (finalized 2026-09-10)
 
-1. **Weekly format** — best-of-the-week vs. trends vs. hybrid. Deliberately
-   left flexible (the block model, §6). Decide by trying formats and getting
-   reader feedback; it's a Content Builder change each time, not an EmailServer
-   one.
-2. **If the operator never approves a daily by `send_after`** — current design:
-   it auto-sends. Alternative: it skips that day. Revisit once auto-send has a
-   track record.
-3. **Does the Conductor pass the week's content to Content Builder, or does
-   Content Builder pull it from EmailServer?** Leaning: Conductor passes it, so
-   Content Builder stays fully decoupled from EmailServer.
-4. **Newsletter config** — where topic/voice/schedule config for generation
-   lives. Leaning: on the `email_servers` row (or a linked table) in
-   EmailServer, so a newsletter's identity isn't split across services.
-5. **How separate are Content Builder's internal agents** — genuinely separate
-   API calls/contexts vs. one loop with tools. Separate is the better learning
-   outcome; decide based on how much complexity is worth it.
-6. **Notification channel** — start with an email from EmailServer to the
-   operator; consider Slack/push later.
+The v0.1 open questions, resolved:
+
+1. **No-approval fallback** — the daily **auto-sends at 10:00 AM** if not
+   already approved. ("If it hasn't gone out by 10, send it.") Generated
+   ~6 AM → `send_after` 10 AM. Broken/empty generations still can't auto-send
+   (§9). May revisit once auto-send has a track record.
+2. **Week's content handoff** — the **Conductor** fetches the week's sent daily
+   Issues from EmailServer and passes them to Content Builder in the request
+   body. Content Builder never calls EmailServer.
+3. **Newsletter generation config** (topics / voice / schedule) — **lives on
+   EmailServer**, on or linked to the `email_servers` row. A newsletter's
+   identity isn't split across services. The Conductor reads it when it starts
+   a run.
+4. **Content Builder's internal agents** — **genuinely separate agents**
+   (Research / Curator / Writer / Editor), each its own API call/context,
+   coordinated by a small in-service orchestrator. Deliberately the harder
+   path — it's the learning goal (§11).
+5. **Notification channel** — **email** from EmailServer to the operator, with
+   a review link. Slack/push can come later.
+6. **Weekly format** — **stays flexible.** The block model (§6) supports
+   best-of / trends / hybrid without an EmailServer change. Decide by trying
+   formats and getting reader feedback; each change is a Content Builder
+   prompt/logic change only.
 
 ---
 
-## 16. Relationship to the SRD and a future build spec
+## 16. Repository & infrastructure layout
+
+### 16.1 Three repos, one per service
+
+Polyrepo, matching the three services 1:1. EmailServer already exists as a
+clean standalone repo with per-milestone history; folding it into a monorepo
+would mean rewriting that history for little benefit, and "three services over
+HTTP APIs, deployed independently" is itself a representative distributed-
+systems setup.
+
+```
+C:\Users\randy\Documents\development\SubscriberEmails\
+  EmailServer\      → GitHub: email-server      (exists)
+  ContentBuilder\   → GitHub: content-builder   (new)
+  Conductor\        → GitHub: conductor         (new, small)
+```
+
+`SubscriberEmails/` stays a plain local folder — not a repo, not deployed.
+
+*(Monorepo with shared packages is a fine thing to learn — but as a deliberate
+separate exercise, not a retrofit here.)*
+
+### 16.2 One Supabase project
+
+EmailServer's existing Supabase project holds **everything** — newsletters,
+subscribers, templates, Issues, send history. Content Builder and Conductor
+are **stateless**: no database.
+
+- "Did today's run succeed?" is answered by "did a draft Issue appear in
+  EmailServer by ~8 AM?" The Conductor checks this itself and emails the
+  operator if not.
+
+### 16.3 Render: three services
+
+| Service | Render type | Cost |
+|---|---|---|
+| EmailServer | Web Service | exists |
+| Content Builder | Web Service, **free tier** | $0 — only hit twice a day; cold start is irrelevant for a minutes-long job |
+| Conductor | **Cron Job** | a few $/mo |
+
+Incremental cost is small.
+
+### 16.4 The shared contract (Issue / block schema)
+
+This is the only thing that spans repos, so pin it:
+
+- **EmailServer owns it** — defines the TypeScript types, does the rendering.
+- **EmailServer validates every incoming Issue** at the ingestion endpoint
+  (`zod` or similar). A Content Builder bug then yields a clear `400`, never a
+  broken email.
+- **Content Builder mirrors the type** — a hand-kept `src/lib/issue-schema.ts`
+  (types + `zod` schema) copied into its repo. Upgrade path if that gets
+  annoying: publish it as a tiny npm package, or `GET /api/schema/issue` from
+  EmailServer. Start hand-kept.
+
+### 16.5 Docs
+
+The canonical design docs (`CONTENT-PIPELINE-ARCHITECTURE.md`, the future
+`R2_BUILD-SPEC.md`) stay in **EmailServer's repo** — the anchor. Each new
+repo's `README` links back to them, and a copy of the relevant doc + the
+`issue-schema.ts` contract is placed in each new repo when it's scaffolded
+(§17).
+
+---
+
+## 17. Running Claude Code on each service
+
+**Launch Claude Code from the service's own folder** (`ContentBuilder/`,
+`Conductor/`), not from the `SubscriberEmails/` parent:
+
+- Git operations target the right repo; commits/branches/deploys are scoped
+  correctly.
+- The project's own `AGENTS.md` / `package.json` / deploy config is what gets
+  picked up — no ambiguity from a non-repo parent containing sub-repos.
+- Matches how EmailServer is already worked on.
+
+**A localized session won't have the cross-repo context, so when a new service
+is scaffolded, make the context travel with the repo:**
+
+1. Copy `issue-schema.ts` (the §16.4 contract) into the repo.
+2. Copy `CONTENT-PIPELINE-ARCHITECTURE.md` (and the future `R2_BUILD-SPEC.md`)
+   into the repo's `docs/`.
+3. Seed the repo's Claude memory at the start of the first session (operator
+   profile, build workflow, a pointer to the architecture). A fresh memory
+   namespace for a fresh project is correct.
+
+**Launch from the parent only for deliberate cross-cutting changes** — e.g.
+"change the Issue schema and update EmailServer *and* Content Builder in one
+pass." That's the exception.
+
+---
+
+## 18. Relationship to the SRD and a future build spec
 
 - SRD **R2** ("Content Automation & Scheduling"): this document is its detailed
   design. R2's "Content Builder app", "Conductor agent", "Scheduled sends",
@@ -408,4 +513,4 @@ in production.
   milestones and acceptance criteria, the same way `V1_BUILD-SPEC.md` was
   derived from the SRD.
 
-*End of Content Pipeline Architecture v0.1*
+*End of Content Pipeline Architecture v0.2 — design finalized.*
