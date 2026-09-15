@@ -1,9 +1,9 @@
 # Content Pipeline Architecture — Daily & Weekly Newsletter Automation
 
-**Status:** Design document — **finalized 2026-09-10.** Not yet a build spec
-(no milestones or acceptance criteria); to be turned into an
-`R2_BUILD-SPEC.md` when build starts. All the open questions from v0.1 are now
-decided; see §15.
+**Status:** Design document — **finalized, including the Reviewer's RAG
+approach (2026-09-15).** Not yet a build spec (no milestones or acceptance
+criteria); to be turned into an `R2_BUILD-SPEC.md` when build starts, using
+§18's stages as the milestone list.
 
 **Covers:** SRD R2 (Content Builder app, Conductor/orchestrator, scheduled
 sends) and the R3 weekly-email + subscription-preference work, which the
@@ -17,6 +17,7 @@ exists and is deployed.
 |---------|------|---------|
 | v0.1 | 2026-09-08 | Initial architecture from the design discussion. |
 | v0.2 | 2026-09-10 | Finalized: all v0.1 open questions decided (§15). Added §16 (repository & infrastructure layout — 3 repos, 1 Supabase, 3 Render services) and §17 (running Claude Code per repo). Daily `send_after` pinned to 10:00 AM. |
+| v0.3 | 2026-09-15 | Designed the Reviewer agent's three checks and its RAG system (§11): link validity and summary-accuracy are *not* RAG (mechanical / grounded-in-one-document), the PM-Perspective-vs-practices check *is* — a seed corpus in Content Builder's own `pgvector` Supabase project (a scoped exception to §16.2), growing later from a per-article `mailto:` feedback link. Added §18 (recommended build order — 5 stages, RAG lands at stage 3) and the R1-vs-R2 naming rationale in §19. |
 
 ---
 
@@ -285,6 +286,10 @@ Send filtering: subscribers with preference `weekly` or `both`.
 - **Guardrails:**
   - A broken or empty generation (no articles, empty blocks) is created
     **without** a `send_after` — it can't auto-send, it forces review.
+  - An Issue carrying **unresolved Reviewer flags** (§11.5 — a bad link, a
+    weak summary match, a practice-alignment concern) is treated the same way:
+    no `send_after`, forces review. This only applies once the Reviewer exists
+    (build stage 2+, §18).
   - Consider requiring the first N real daily sends be hand-approved before
     trusting auto-send.
   - The auto-send cron should log loudly and be easy to pause.
@@ -325,15 +330,92 @@ the better portfolio story.
 | **Research** | Given the newsletter's topic config, web-search for recent, relevant articles. Return candidates with source + URL. |
 | **Curator** | Pick the best 3–7, dedupe, filter for genuine PM relevance, rank. |
 | **Writer** | Per article: a tight summary and a PM perspective in the newsletter's voice. Write the closing thought. |
-| **Editor** | Read the whole draft: tighten, cut fluff, verify every link resolves, check the voice is consistent. |
+| **Reviewer** | Three checks on the draft (§11.1) — one of them genuine RAG (§11.2). |
 
 The Conductor orchestrates *across services* (schedule, handoffs). Content
-Builder orchestrates *within itself* (Research → Curator → Writer → Editor).
+Builder orchestrates *within itself* (Research → Curator → Writer → Reviewer).
 
 The existing Claude **Skill** is the proof of concept and the baseline for the
 prompts — the daily Skill already produces the target card format, and the
 weekly Skill shows one weekly format. Port the approach, don't run the Skill
 in production.
+
+### 11.1 The Reviewer's three checks — only one is RAG
+
+Precision matters here (it's worth being able to draw this line in an
+interview): "using retrieval" isn't all the same technique.
+
+| Check | Technique | Needs a corpus / vector search? |
+|---|---|---|
+| **Link validity** — does the URL resolve to the actual article, not a 404, paywall redirect, or generic homepage? | Plain fetch + validation (e.g. does the fetched page's title/content match the expected article) | No — no retrieval at all. |
+| **Summary accuracy** — does the summary/PM Perspective faithfully reflect the article? | Grounded verification: the Research agent already fetched the full article text; hand it to the Reviewer as context and ask "does this match?" | No — this is retrieval of *one already-known document*, not a search over a corpus. RAG-adjacent, not RAG. |
+| **PM Perspective vs. PM practices** — does it reflect sound product-management thinking? | **Real RAG**: embed the PM Perspective, vector-search a corpus of practice documents, retrieve the top few, judge alignment against what was retrieved. | **Yes.** This is the one that's genuinely "query a knowledge base, generate grounded on retrieved context." |
+
+### 11.2 The RAG corpus
+
+- **Seed it small** — 10–30 short PM-practice documents to start (a paragraph
+  or two each, e.g. "prioritize by user impact over technical elegance").
+- **Storage:** Content Builder's **own** small Supabase project with
+  `pgvector` enabled — separate from EmailServer's. This is a deliberate,
+  scoped exception to "Content Builder has no database" (§3, principle 3):
+  a knowledge base for the Reviewer's own tooling is not newsletter business
+  data, so it doesn't belong in EmailServer, and Content Builder stays fully
+  decoupled from EmailServer's schema.
+- **Embedding provider:** turning text into the vectors that make similarity
+  search possible needs a model *Claude doesn't provide* — Anthropic doesn't
+  offer an embeddings API. Use a dedicated embedding provider: **Voyage AI**
+  (Anthropic's recommended pairing) or OpenAI's embeddings are the standard
+  choices. Decide at build time (stage 3, §18); needs its own API key either
+  way.
+
+### 11.3 Growing the corpus from feedback
+
+Each email's article cards carry a **"Read full article · Disagree with this
+take?"** pair of links (§11.4) — piggybacking the feedback prompt onto the
+existing link line rather than adding a new one, so it costs no extra visual
+weight.
+
+- **V1 of the feedback loop (build now, stage 4):** the "Disagree?" link is a
+  plain `mailto:` to the operator's own address, with the subject/body
+  pre-filled with the article's identity (title, issue date) so the reader
+  only has to type their reason. No new page, no new table, no new endpoint —
+  replies just land in the operator's inbox for now.
+- **V2 (later, not yet scoped):** the link instead posts to a small EmailServer
+  page (same pattern as `/unsubscribe`) into a new `issue_feedback` table
+  (issue id, article reference, reason, timestamp). Content Builder (via the
+  Conductor) periodically pulls new feedback and embeds each one as its own
+  document in the RAG corpus — *alongside*, not merged into, the seed
+  practices. At review time the Reviewer retrieves both: the seed practices
+  and similar past disagreements ("a reader raised this exact objection
+  before"). EmailServer stays authoritative on the raw feedback; the vector
+  store is a derived index, same pattern as pulling the week's Issues (§15,
+  decision 2).
+- **V3 (further out, not yet scoped):** periodically synthesize clusters of
+  similar feedback into new distilled practice documents, rather than the
+  corpus only ever growing by raw disagreements.
+
+### 11.4 The feedback link
+
+Per-article, not per-issue — the PM Perspective is per-article, so the
+objection has to point at one specific card. Styled as a second small link
+next to "Read full article", not a new line:
+
+```
+Read full article  ·  Disagree with this take?
+```
+
+### 11.5 What the Reviewer's findings do
+
+**Annotate, don't block or loop — to start.** The Reviewer's findings (a bad
+link, a weak summary match, a practice-alignment concern) attach to the draft
+Issue and surface in the review email/preview; the human decides. A full
+"Reviewer sends it back to the Writer to revise" loop is a reasonable future
+enhancement (worth naming as "the natural next step" even before building it)
+but adds real complexity — when to give up, cost, infinite-loop risk — not
+needed to prove the concept.
+
+One concrete effect now: an Issue with unresolved Reviewer flags can't
+auto-send (§9's guardrails, extended).
 
 ---
 
@@ -357,12 +439,16 @@ See §16 for the full repo + infrastructure layout. In brief:
 - **EmailServer** — unchanged (Render web service; its existing Supabase project).
 - **Content Builder** — a second Render web service, **free tier is fine** (only
   hit twice a day; a cold start doesn't matter for a job that runs for minutes).
-  One endpoint. Calls the Anthropic API. No database.
+  One endpoint. Calls the Anthropic API (generation) and, from build stage 3
+  on, an embedding provider (Voyage AI or OpenAI, §11.2).
 - **Conductor** — a Render **Cron Job** (Render's scheduled-job service type).
   Runs, does its handoffs, exits. No database.
-- **No new Supabase project.** Content Builder and Conductor are stateless;
-  everything persists in EmailServer's existing database (plus the new `issues`
-  table and template changes).
+- **No new Supabase project for newsletter data** — that all stays in
+  EmailServer's existing database (plus the new `issues` table and template
+  changes). **One scoped exception:** from build stage 3 on, Content Builder
+  gets its **own** small Supabase project with `pgvector`, holding only the
+  Reviewer's RAG corpus (§11.2) — not newsletter business data, so it doesn't
+  belong in EmailServer.
 
 ---
 
@@ -430,15 +516,23 @@ C:\Users\randy\Documents\development\SubscriberEmails\
 *(Monorepo with shared packages is a fine thing to learn — but as a deliberate
 separate exercise, not a retrofit here.)*
 
-### 16.2 One Supabase project
+### 16.2 One Supabase project for newsletter data (plus one small exception)
 
-EmailServer's existing Supabase project holds **everything** — newsletters,
-subscribers, templates, Issues, send history. Content Builder and Conductor
-are **stateless**: no database.
+EmailServer's existing Supabase project holds **all newsletter business
+data** — newsletters, subscribers, templates, Issues, send history. Content
+Builder and Conductor are **stateless with respect to that data**: no
+newsletter-related database of their own, no duplicated Issue history.
 
 - "Did today's run succeed?" is answered by "did a draft Issue appear in
   EmailServer by ~8 AM?" The Conductor checks this itself and emails the
   operator if not.
+
+**Exception (build stage 3+):** Content Builder gets its own small Supabase
+project (`pgvector` enabled) for the **Reviewer's RAG corpus** — see §11.2.
+That's a knowledge base for Content Builder's own internal tooling, not
+newsletter business data, so it's a deliberate exception to "one project,"
+not a contradiction of it. EmailServer still never duplicates or depends on
+it.
 
 ### 16.3 Render: three services
 
@@ -500,7 +594,33 @@ pass." That's the exception.
 
 ---
 
-## 18. Relationship to the SRD and a future build spec
+## 18. Recommended build order
+
+Each stage ships something real and demoable before the next one starts —
+the same "small, verifiable steps" discipline `V1_BUILD-SPEC.md` used for
+EmailServer's M0–M7. This sequencing becomes the milestone list in
+`R2_BUILD-SPEC.md`.
+
+1. **Core pipeline.** Research → Curator → Writer only — no Reviewer yet.
+   Conductor wires the result to EmailServer as a draft Issue; human reviews
+   and sends (or auto-send at 10:00 AM, §9). This alone proves the multi-agent
+   + orchestrator architecture and produces real daily emails.
+2. **Reviewer — mechanical checks.** Link validity + summary accuracy against
+   the source article (§11.1). No RAG, no database yet — pure value-add on
+   top of stage 1.
+3. **Reviewer — the RAG check.** The seed PM-practices corpus, `pgvector`,
+   Content Builder's own Supabase project, an embedding provider, similarity
+   search, the PM Perspective alignment judgment (§11.2). **This is the stage
+   where "I built a system that uses RAG" becomes true** — before any
+   feedback loop exists, so it's a complete, defensible RAG system on its own.
+4. **Feedback loop.** The `mailto:` "Disagree with this take?" link (§11.3,
+   §11.4) — capture only, no corpus integration yet.
+5. **(Later, not yet scoped)** Wire feedback into the Reviewer's training:
+   structured capture via an EmailServer page + `issue_feedback` table,
+   syncing new feedback into the RAG corpus as its own documents alongside
+   the seed practices (§11.3's "V2").
+
+## 19. Relationship to the SRD and a future build spec
 
 - SRD **R2** ("Content Automation & Scheduling"): this document is its detailed
   design. R2's "Content Builder app", "Conductor agent", "Scheduled sends",
@@ -509,8 +629,18 @@ pass." That's the exception.
   subscription-preference send filtering are designed here because a live
   weekly forces them. The self-service `/preferences` page and Mailgun-webhook
   engagement tracking remain later R3 work.
+- **Why the future build spec is `R2_BUILD-SPEC.md`, not "V1" for Content
+  Builder's own repo:** R1/R2/R3/R4 are phases of *this one product's*
+  roadmap (defined in the SRD), not a per-repo version counter. EmailServer's
+  V1 *was* R1 — R1 just isn't spelled out as a filename because it was the
+  first release. Content Builder and Conductor are new *codebases*, but they
+  exist to deliver R2 of the *same product* — so they inherit the R2 label
+  rather than each starting their own "V1." One release ladder for the whole
+  system means no translation needed when any repo's docs say "R2."
 - Next step when build starts: turn this into `docs/R2_BUILD-SPEC.md` with
-  milestones and acceptance criteria, the same way `V1_BUILD-SPEC.md` was
-  derived from the SRD.
+  milestones and acceptance criteria (§18's stages are the milestones), the
+  same way `V1_BUILD-SPEC.md` was derived from the SRD. Canonical in
+  EmailServer's repo (§16.5); copied into `content-builder/` and `conductor/`
+  when each is scaffolded.
 
-*End of Content Pipeline Architecture v0.2 — design finalized.*
+*End of Content Pipeline Architecture v0.3 — design finalized, RAG approach settled.*
