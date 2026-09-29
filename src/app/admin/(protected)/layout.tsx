@@ -9,6 +9,7 @@ const NAV_LINKS = [
   { href: "/admin", label: "Dashboard" },
   { href: "/admin/subscribers", label: "Subscribers" },
   { href: "/admin/builder", label: "Builder" },
+  { href: "/admin/issues", label: "Issues" },
   { href: "/admin/send", label: "Send" },
   { href: "/admin/history", label: "History" },
   { href: "/admin/newsletters", label: "Newsletters" },

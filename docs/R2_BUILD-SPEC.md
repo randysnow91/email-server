@@ -1,6 +1,7 @@
 # Claude Code Build Spec — EmailServer (R2)
 
-**Status:** v1.0 — drafted, no milestones built yet.
+**Status:** v1.1 — M1 built and verified, except the auto-send cron (deferred,
+see §8's M1 notes and §10).
 **Derived from:** `CONTENT-PIPELINE-ARCHITECTURE.md` (the cross-repo design —
 read it first, especially §4, §6, §9, §12) + planning discussion (2026-09-15).
 **Scope:** EmailServer's own R2 work only. Content Builder and Conductor each
@@ -11,6 +12,7 @@ architecture doc §16.5 for why this isn't one shared document anymore
 | Version | Date | Summary |
 |---------|------|---------|
 | v1.0 | 2026-09-15 | Split out of the original cross-repo `R2_BUILD-SPEC.md` (commit `ed92913`) into a doc scoped to EmailServer alone. Content unchanged from that version's M1 section, reorganized as this repo's own spec. |
+| v1.1 | 2026-09-29 | M1 built and verified against a hand-crafted `IssuePayload` (no Content Builder/Conductor needed yet), then re-verified end-to-end against Content Builder's real output. Three review-UI gaps found in real use — an editor, a per-Issue test-send, and a read-only view of sent/skipped Issues — turned out to need their own small routes; see §6 and §8. Auto-send cron not built; drafts past `send_after` currently just wait for manual approval (§8, §10). |
 
 > **How to use this document.** The architecture doc says *what* and *why*,
 > across all three services. This spec says *how, with what, and in what
@@ -177,9 +179,33 @@ capability is there.
 - Returns `{ id, status, send_after }`
 - A `400` on an invalid payload — never a broken email
 
-*(Preview/approve/send UI changes needed to actually review an Issue are
-scoped inside M1 below, not spelled out route-by-route — extend the existing
-Builder/Send pages rather than inventing new ones.)*
+*(Preview/approve/send UI changes needed to actually review an Issue were
+scoped inside M1 below, not spelled out route-by-route in the original v1.0
+of this doc. In practice a new `/admin/issues` page turned out to fit better
+than extending Builder/Send — see the routes it actually calls below.)*
+
+**Admin-gated routes actually built for `/admin/issues`** *(proxy.ts's
+`/api/manager/*` gate, not the `content_api_key`)*:
+
+- `GET /api/manager/issues` — lists Issues for the active newsletter.
+- `GET /api/manager/issues/:id/preview` — composes Template + Issue for the
+  review iframe. For a `sent` Issue, returns the archived `html_snapshot`
+  from `send_history` instead of recomposing live (`archived: true`, plus
+  `sentDate`/`recipientCount`/`successCount`/`failedCount`) — that's the
+  exact bytes that went out, which can differ from a fresh compose if the
+  Template changed since. Falls back to a live compose (`archived: false`)
+  for `draft`/`approved`/`skipped`, or if no snapshot is found.
+- `POST /api/manager/issues/:id/send`, `.../skip` — approve & send, or skip.
+- `POST /api/manager/issues/:id/test-send` — send a test copy to one address,
+  composed from the Issue's *current* content (including any edit override).
+  Added after real review turned up that the existing `/api/sender/test-send`
+  only covered the manually-edited main body, not an Issue.
+- `POST /api/manager/issues/:id/edit` — body `{ rawHtml: string | null }`.
+  Lets the operator fix something (a bad link, a Reviewer-flagged line)
+  before sending, by setting the Issue's `raw_html` escape hatch (architecture
+  doc §6.3) directly — deliberately not a structured block editor. `null`
+  reverts to the originally generated blocks. `409` if the Issue is no longer
+  `draft`.
 
 ---
 
@@ -206,38 +232,61 @@ by design (architecture doc §3, principle 1).
 
 ### M1: Issue/Template Data Model + Ingestion Endpoint
 
+**Status: built and verified 2026-09-29**, except the auto-send cron task
+(#5) — not built; see the acceptance criteria below and §10.
+
 **Goals:** EmailServer can receive and store an Issue, and the operator can
 review/approve/send it, before Content Builder or Conductor exist to produce
 one for real (test with a hand-crafted payload).
 
 **Tasks:**
-1. Migration: `issues` table, `email_servers` additions, `send_history`
+1. ✅ Migration: `issues` table, `email_servers` additions, `send_history`
    additions (§5.1).
-2. `POST /api/issues` (§6) — validated, per-newsletter `content_api_key`
+2. ✅ `POST /api/issues` (§6) — validated, per-newsletter `content_api_key`
    auth, sets `send_after` per the guardrails, triggers the existing
    operator-notification email.
-3. `GET /api/newsletters/:id/config` and `GET /api/newsletters/:id/issues`
-   (§6) — for the future Conductor to call.
-4. Extend the admin UI: a way to preview/approve/send an Issue (compose
-   Template + Issue per architecture doc §5) — reuse as much of the existing
-   Builder/Send UI pattern as fits rather than inventing a parallel one.
-5. Extend the auto-send cron (existing pattern) to also pick up `draft`
-   Issues past `send_after`.
-6. Test end-to-end with a hand-crafted `IssuePayload` posted via
-   `curl`/Postman — no Content Builder needed yet.
+3. ✅ `GET /api/newsletters/:id/config` and `GET /api/newsletters/:id/issues`
+   (§6) — built for the future Conductor to call; not yet exercised by a real
+   caller since Conductor doesn't exist yet.
+4. ✅ Extend the admin UI: a new `/admin/issues` page to preview, edit,
+   test-send, approve/send, skip, and (after the fact) review any Issue
+   regardless of status — see §6 for the routes it added. Went beyond the
+   original wording of this task: a hands-on review pass surfaced that
+   "preview/approve/send" alone wasn't enough (no way to fix a flagged Issue,
+   no way to test an Issue specifically, no way to look back at what actually
+   sent) — the editor, per-Issue test-send, and archived read-only view were
+   added in response.
+5. ❌ **Not done.** Extend the auto-send cron to also pick up `draft` Issues
+   past `send_after`. A draft's `send_after` is computed and stored
+   correctly, but nothing currently acts on it — every Issue, daily or
+   weekly, flagged or clean, waits for manual Approve & Send. See §10.
+6. ✅ Tested end-to-end twice: first with a hand-crafted `IssuePayload` via
+   PowerShell, then against Content Builder's real generated output.
 
 **Acceptance Criteria:**
-- [ ] `POST /api/issues` accepts a valid payload, rejects an invalid one with
-      a `400` (never a broken email).
-- [ ] A posted daily Issue with no Reviewer flags gets `send_after` = +4h; a
-      weekly Issue, or one with flags, gets `send_after = NULL`.
-- [ ] The operator receives a review-link email when a draft Issue is created.
-- [ ] The operator can preview (Template + Issue composed), edit, approve,
-      and send an Issue from the admin UI.
-- [ ] On send, the composed HTML snapshot is saved to `send_history`.
+- [x] `POST /api/issues` accepts a valid payload, rejects an invalid one with
+      a `400` (never a broken email). Verified against 7 malformed-payload
+      shapes (missing/invalid `type`, missing `date`, empty `blocks`, unknown
+      block kind, a block missing a required field, a malformed
+      `reviewerFlags` entry) plus a missing/garbage `content_api_key` (`401`)
+      — all rejected, none created a row. The `rawHtml`-only payload (no
+      `blocks`) still succeeds, confirming the escape hatch isn't broken by
+      the same validation.
+- [x] A posted daily Issue with no Reviewer flags gets `send_after` = +4h; a
+      weekly Issue, or one with flags, gets `send_after = NULL`. Verified
+      directly against a live-posted Issue's row.
+- [x] The operator receives a review-link email when a draft Issue is created.
+- [x] The operator can preview (Template + Issue composed), edit, approve,
+      and send an Issue from the admin UI. Verified by hand end-to-end.
+- [x] On send, the composed HTML snapshot is saved to `send_history`.
 - [ ] The auto-send cron sends any `draft` daily Issue past its `send_after`.
-- [ ] `content_api_key` correctly scopes `POST /api/issues` to one newsletter
+      **Not built** — deferred (§10).
+- [x] `content_api_key` correctly scopes `POST /api/issues` to one newsletter
       — a key for newsletter A cannot create an Issue for newsletter B.
+      Verified with two real newsletters: posting with newsletter B's key
+      while newsletter A was the active admin session still filed the Issue
+      under B, and the admin Issues list only showed it once B was made
+      active.
 
 ---
 
@@ -283,10 +332,23 @@ Same boundaries as the architecture doc §14, plus:
 - **Newsletter generation config UI.** M1 adds `topics`/`voice` columns but
   doesn't require a polished admin UI to edit them — a direct DB edit or a
   minimal form is fine until it's annoying.
+- **Auto-send cron isn't built yet.** `send_after` is computed and stored
+  correctly on ingestion (verified), but nothing currently reads it — every
+  Issue, clean daily included, sits as a draft until the operator manually
+  hits Approve & Send from `/admin/issues`. This was deliberately deferred
+  rather than built speculatively: the manual loop needed to be proven first.
+  Worth revisiting once the manual flow has run for a while and the "N
+  hand-approved sends before trusting auto-send" bar below feels met.
 - **Auto-send trust.** Consider requiring the first N real daily sends be
   hand-approved before trusting auto-send (architecture doc §9) — an
-  operating discipline to remember, not enforced in code.
+  operating discipline to remember, not enforced in code. Doubles as the
+  natural trigger for actually building the cron above.
+- **Issue editing is raw HTML, not structured fields.** `/admin/issues`'
+  editor works on the fully-rendered HTML (via the `raw_html` escape hatch),
+  not on individual block fields (title, summary, etc.). Fine for a quick
+  fix; revisit only if hand-editing HTML turns out to be a recurring
+  friction point rather than an occasional one.
 
 ---
 
-*End of Build Spec v1.0 — drafted, no milestones built.*
+*End of Build Spec v1.1 — M1 built and verified, auto-send cron deferred.*

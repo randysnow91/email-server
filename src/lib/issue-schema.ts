@@ -6,7 +6,7 @@
 // package or serve from an endpoint).
 //
 // This is the *wire* shape - what Content Builder produces and what
-// EmailServer's future ingestion endpoint (§4.2) accepts. Deliberately
+// EmailServer's ingestion endpoint (POST /api/issues) accepts. Deliberately
 // separate from EmailServer's internal Issue database record, which adds
 // fields Content Builder never needs to know about (id, status,
 // send_after, which newsletter).
@@ -14,6 +14,11 @@
 // No validation library - hand-rolled, matching this project's existing
 // style (see isValidEmail in src/lib/validation.ts): a plain type-guard
 // function a caller can gate on, no new dependency.
+//
+// Synced 2026-09-28 against Content Builder's own copy, which added
+// reviewerFlags during its M2/M3 (link validity, summary accuracy, and the
+// RAG-grounded practice-alignment check) - this file didn't have a consumer
+// for that field until now.
 
 export type ArticleCardBlock = {
   kind: "article_card";
@@ -42,6 +47,19 @@ export type Block = ArticleCardBlock | TextBlock | ClosingThoughtBlock;
 
 export type IssueType = "daily" | "weekly";
 
+// The Reviewer's findings (architecture doc §11.1, §11.5). "broken_link" and
+// "inaccurate_summary" are the two mechanical checks; "practice_alignment"
+// is the RAG-grounded one. Findings annotate - they never block generation,
+// but a non-empty list here keeps this Issue from getting a send_after
+// (see the ingestion route).
+export type ReviewerFlagType = "broken_link" | "inaccurate_summary" | "practice_alignment";
+
+export type ReviewerFlag = {
+  type: ReviewerFlagType;
+  articleUrl: string; // identifies which article_card this concerns
+  message: string; // human-readable, shown to the operator reviewing the draft
+};
+
 export type IssuePayload = {
   type: IssueType;
   date: string; // ISO date, e.g. "2026-09-15"
@@ -49,6 +67,10 @@ export type IssuePayload = {
   // Escape hatch (§6.3): finished HTML that bypasses block rendering
   // entirely. Rare - only for a deliberate one-off experiment.
   rawHtml?: string;
+  // Optional so payloads from before Content Builder's M2 (or a
+  // rawHtml-only payload) remain valid. Always present (even as []) on a
+  // real M2+ daily/weekly generation.
+  reviewerFlags?: ReviewerFlag[];
 };
 
 function isNonEmptyString(value: unknown): value is string {
@@ -78,6 +100,19 @@ function isValidBlock(value: unknown): value is Block {
   }
 }
 
+function isValidReviewerFlag(value: unknown): value is ReviewerFlag {
+  if (typeof value !== "object" || value === null) return false;
+  const flag = value as Record<string, unknown>;
+
+  return (
+    (flag.type === "broken_link" ||
+      flag.type === "inaccurate_summary" ||
+      flag.type === "practice_alignment") &&
+    isNonEmptyString(flag.articleUrl) &&
+    isNonEmptyString(flag.message)
+  );
+}
+
 // Gate on this before trusting an incoming Issue - a Content Builder bug
 // then produces a clear rejection, never a broken email (§16.4).
 export function isValidIssuePayload(value: unknown): value is IssuePayload {
@@ -87,6 +122,12 @@ export function isValidIssuePayload(value: unknown): value is IssuePayload {
   if (issue.type !== "daily" && issue.type !== "weekly") return false;
   if (!isNonEmptyString(issue.date)) return false;
   if (issue.rawHtml !== undefined && typeof issue.rawHtml !== "string") return false;
+  if (
+    issue.reviewerFlags !== undefined &&
+    !(Array.isArray(issue.reviewerFlags) && issue.reviewerFlags.every(isValidReviewerFlag))
+  ) {
+    return false;
+  }
 
   // rawHtml alone is a valid payload (§6.3) even with no blocks.
   if (issue.rawHtml) return true;

@@ -7,6 +7,9 @@ create type subscription_preference as enum ('daily', 'weekly', 'both');
 create type section_type as enum ('subject', 'header', 'title', 'about', 'main_body', 'ad', 'editor', 'footer');
 create type content_source as enum ('manual', 'linked', 'generated');
 create type send_status as enum ('pending', 'in_progress', 'completed', 'failed');
+-- R2 (supabase/migrations/002_r2_issues.sql):
+create type issue_type as enum ('daily', 'weekly');
+create type issue_status as enum ('draft', 'approved', 'sent', 'skipped');
 
 -- Email_Servers: account metadata (one per newsletter, e.g. "AI PM Perspective", "Dog Rescue")
 create table email_servers (
@@ -14,9 +17,17 @@ create table email_servers (
   name varchar(255) not null,
   description text,
   created_at timestamptz not null default now(),
-  active boolean not null default true
+  active boolean not null default true,
+  -- R2: generation config for Content Builder, and the key Content
+  -- Builder/Conductor use to POST an Issue in (one per newsletter - a
+  -- leaked key only compromises the newsletter it's scoped to). Added in
+  -- supabase/migrations/002_r2_issues.sql.
+  topics text,
+  voice text,
+  content_api_key uuid not null default gen_random_uuid()
   -- R4 adds: user_id uuid references auth.users(id), once real auth exists
 );
+alter table email_servers add constraint email_servers_content_api_key_key unique (content_api_key);
 
 -- Subscribers: list of subscribers per account
 create table subscribers (
@@ -75,6 +86,28 @@ create table send_history (
 );
 create index idx_send_history_email_server_id on send_history (email_server_id);
 create index idx_send_history_sent_date on send_history (sent_date);
+-- R2: the composed HTML snapshot actually sent, and which Issue (if any) it
+-- came from. Added in supabase/migrations/002_r2_issues.sql.
+alter table send_history add column html_snapshot text;
+alter table send_history add column issue_id uuid references issues(id);
+
+-- Issues: one row per newsletter x date x type (R2, architecture doc §4.2).
+-- Added in supabase/migrations/002_r2_issues.sql.
+create table issues (
+  id uuid primary key default gen_random_uuid(),
+  email_server_id uuid not null references email_servers(id) on delete cascade,
+  type issue_type not null,
+  status issue_status not null default 'draft',
+  send_after timestamptz,  -- NULL = no auto-send (weekly, or unresolved Reviewer flags)
+  blocks jsonb,            -- ordered content blocks; NULL if raw_html is set instead
+  raw_html text,           -- escape hatch (architecture doc §6.3)
+  reviewer_flags jsonb,    -- the Reviewer's findings, if any; NULL/[] = clean
+  created_at timestamptz not null default now(),
+  created_by text
+);
+create index idx_issues_email_server_id on issues (email_server_id);
+create index idx_issues_status on issues (status);
+create index idx_issues_send_after on issues (send_after);
 
 -- Grants: tables created via the SQL Editor don't automatically pick up the
 -- default privileges Supabase's Table Editor UI would set. The app connects
@@ -86,3 +119,4 @@ grant select, insert, update, delete on public.email_servers to service_role;
 grant select, insert, update, delete on public.subscribers to service_role;
 grant select, insert, update, delete on public.email_sections to service_role;
 grant select, insert, update, delete on public.send_history to service_role;
+grant select, insert, update, delete on public.issues to service_role;

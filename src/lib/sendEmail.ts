@@ -61,6 +61,11 @@ export async function logSendHistory(params: {
   emailServerId: string;
   isTest: boolean;
   result: BatchSendResult;
+  // R2: the exact HTML that went out, and which Issue (if any) produced it
+  // (architecture doc §4.3). Optional so the manual send/test-send flows
+  // don't have to change their calls.
+  htmlSnapshot?: string;
+  issueId?: string;
 }): Promise<{ id: string | null; status: "completed" | "failed" }> {
   // "failed" only when nothing at all went out; any partial success still
   // reads as "completed" (with the errors array showing what didn't).
@@ -79,6 +84,8 @@ export async function logSendHistory(params: {
       failed_count: params.result.failedCount,
       status,
       error_message: params.result.errors.length ? params.result.errors.join("; ") : null,
+      html_snapshot: params.htmlSnapshot ?? null,
+      issue_id: params.issueId ?? null,
     })
     .select("id")
     .single();

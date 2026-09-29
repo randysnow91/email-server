@@ -140,3 +140,17 @@ export function withGreeting(html: string): string {
 // composeEmail() builds - the send passes Mailgun's
 // "%recipient.unsubscribe_url%" token as its unsubscribeUrl option. The
 // value that fills that token is set per recipient in sendBatch() below.
+
+// A plain, one-recipient internal email - "a draft Issue is ready to
+// review" (architecture doc §9). Deliberately not sendBatch(): there's one
+// recipient (the operator), no greeting/unsubscribe apparatus makes sense
+// for an internal notification, and a failure here shouldn't be conflated
+// with a real subscriber send in send_history.
+export async function sendNotification(to: string, subject: string, html: string): Promise<void> {
+  await callMailgun({
+    to: [to],
+    subject,
+    html,
+    recipientVariables: { [to]: { name: "there", unsubscribe_url: "" } },
+  });
+}
