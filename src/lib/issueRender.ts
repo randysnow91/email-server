@@ -35,7 +35,7 @@ function renderArticleCard(block: ArticleCardBlock): string {
     `<h3 style="margin:0 0 8px;font-size:18px;line-height:1.35;color:#111827;">${escapeHtml(block.emoji)} ${escapeHtml(block.title)}</h3>` +
     `<p style="margin:0 0 10px;font-size:13px;color:#6b7280;"><strong>Source:</strong> ${escapeHtml(block.source)}</p>` +
     `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#374151;"><strong>Summary:</strong> ${escapeHtml(block.summary)}</p>` +
-    `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#374151;font-style:italic;border-left:3px solid #e5e7eb;padding-left:12px;"><strong>Why This Matters:</strong> ${escapeHtml(block.pmPerspective)}</p>` +
+    `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#374151;font-style:italic;border-left:3px solid #e5e7eb;padding-left:12px;"><strong>PM Perspective:</strong> ${escapeHtml(block.pmPerspective)}</p>` +
     `<p style="margin:0;font-size:14px;"><a href="${escapeHtml(block.url)}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;">Read full article &rarr;</a></p>` +
     copyrightLine +
     `</div>`
