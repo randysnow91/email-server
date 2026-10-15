@@ -1,6 +1,6 @@
 # Claude Code Build Spec — EmailServer (R2)
 
-**Status:** v1.3 — M1 and M2 built and verified, except the auto-send cron
+**Status:** v1.4 — M1 and M2 built and verified, except the auto-send cron
 (deferred, see §8's M1 notes and §10). M3 (the "Disagree with this take?"
 feedback link) built; awaiting verification in a real send.
 **Derived from:** `CONTENT-PIPELINE-ARCHITECTURE.md` (the cross-repo design —
@@ -16,6 +16,7 @@ architecture doc §16.5 for why this isn't one shared document anymore
 | v1.1 | 2026-09-29 | M1 built and verified against a hand-crafted `IssuePayload` (no Content Builder/Conductor needed yet), then re-verified end-to-end against Content Builder's real output. Three review-UI gaps found in real use — an editor, a per-Issue test-send, and a read-only view of sent/skipped Issues — turned out to need their own small routes; see §6 and §8. Auto-send cron not built; drafts past `send_after` currently just wait for manual approval (§8, §10). |
 | v1.2 | 2026-10-15 | M2's verification found a real gap: Issue sends ignored `subscription_preference` and went to every active subscriber. Fixed (commit `ee3d746`) — Issue sends now filter by type, and the Issues page's confirm count uses the same rule. Also added `[title](url)` links to text blocks for Content Builder's weekly "Articles by Day" list (§7.3). Verified end-to-end with a real Conductor → Content Builder → EmailServer weekly run. |
 | v1.3 | 2026-10-15 | Added M3: the EmailServer side of Content Builder's M4 — a `mailto:` "Disagree with this take?" link on every article card, to a new `FEEDBACK_EMAIL` (§5.2, §7.5). Decided with the operator to keep feedback human-filtered for launch rather than feeding it to the Reviewer automatically (M3 notes). |
+| v1.4 | 2026-10-15 | Cross-repo check before launch found contract drift: Content Builder added a `dropped_article` reviewer flag on 2026-10-05, but this repo's `issue-schema.ts` was never synced, so `isValidIssuePayload()` rejected the **whole** Issue (400) on any day an article was dropped (commit `60df559` fixed it; the admin page labels it "An article was dropped"). Both copies of `issue-schema.ts` are now byte-identical with a KEEP IDENTICAL header, and the flag types are one array feeding both the type and the validator. |
 
 > **How to use this document.** The architecture doc says *what* and *why*,
 > across all three services. This spec says *how, with what, and in what

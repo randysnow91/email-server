@@ -5,26 +5,28 @@
 // sync by hand until/unless that gets annoying enough to publish as a
 // package or serve from an endpoint).
 //
+// KEEP IDENTICAL: EmailServer and Content Builder each hold a copy of this
+// file, and the two must stay byte-for-byte the same - change one, copy it
+// to the other in the same sitting. (Conductor only passes Issues through
+// and holds no copy.)
+//
 // This is the *wire* shape - what Content Builder produces and what
 // EmailServer's ingestion endpoint (POST /api/issues) accepts. Deliberately
 // separate from EmailServer's internal Issue database record, which adds
 // fields Content Builder never needs to know about (id, status,
 // send_after, which newsletter).
 //
-// No validation library - hand-rolled, matching this project's existing
-// style (see isValidEmail in src/lib/validation.ts): a plain type-guard
-// function a caller can gate on, no new dependency.
+// No validation library - hand-rolled, a plain type-guard function a caller
+// can gate on, no new dependency.
 //
-// Synced 2026-09-28 against Content Builder's own copy, which added
-// reviewerFlags during its M2/M3 (link validity, summary accuracy, and the
-// RAG-grounded practice-alignment check) - this file didn't have a consumer
-// for that field until now.
-//
-// Synced again 2026-10-15: Content Builder added "dropped_article" on
-// 2026-10-05 and this copy never got it, so isValidIssuePayload() rejected
-// the *whole* Issue (400) on any day an article was dropped. Found in a
-// cross-repo check before launch. The type list is now one array, used by
-// both the type and the validator, so the two can't disagree here.
+// Sync history:
+// - 2026-09-28: reviewerFlags (Content Builder M2/M3 - link validity,
+//   summary accuracy, and the RAG-grounded practice-alignment check).
+// - 2026-10-15: "dropped_article", added by Content Builder on 2026-10-05
+//   but never copied to EmailServer, whose validator therefore rejected the
+//   *whole* Issue (400) on any day an article was dropped. Found in a
+//   cross-repo check before launch; both copies made identical, and the
+//   flag types made one array feeding both the type and the validator.
 
 export type ArticleCardBlock = {
   kind: "article_card";
