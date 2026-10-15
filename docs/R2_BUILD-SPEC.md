@@ -1,7 +1,8 @@
 # Claude Code Build Spec — EmailServer (R2)
 
-**Status:** v1.2 — M1 and M2 built and verified, except the auto-send cron
-(deferred, see §8's M1 notes and §10). R2's EmailServer work is complete.
+**Status:** v1.3 — M1 and M2 built and verified, except the auto-send cron
+(deferred, see §8's M1 notes and §10). M3 (the "Disagree with this take?"
+feedback link) built; awaiting verification in a real send.
 **Derived from:** `CONTENT-PIPELINE-ARCHITECTURE.md` (the cross-repo design —
 read it first, especially §4, §6, §9, §12) + planning discussion (2026-09-15).
 **Scope:** EmailServer's own R2 work only. Content Builder and Conductor each
@@ -14,6 +15,7 @@ architecture doc §16.5 for why this isn't one shared document anymore
 | v1.0 | 2026-09-15 | Split out of the original cross-repo `R2_BUILD-SPEC.md` (commit `ed92913`) into a doc scoped to EmailServer alone. Content unchanged from that version's M1 section, reorganized as this repo's own spec. |
 | v1.1 | 2026-09-29 | M1 built and verified against a hand-crafted `IssuePayload` (no Content Builder/Conductor needed yet), then re-verified end-to-end against Content Builder's real output. Three review-UI gaps found in real use — an editor, a per-Issue test-send, and a read-only view of sent/skipped Issues — turned out to need their own small routes; see §6 and §8. Auto-send cron not built; drafts past `send_after` currently just wait for manual approval (§8, §10). |
 | v1.2 | 2026-10-15 | M2's verification found a real gap: Issue sends ignored `subscription_preference` and went to every active subscriber. Fixed (commit `ee3d746`) — Issue sends now filter by type, and the Issues page's confirm count uses the same rule. Also added `[title](url)` links to text blocks for Content Builder's weekly "Articles by Day" list (§7.3). Verified end-to-end with a real Conductor → Content Builder → EmailServer weekly run. |
+| v1.3 | 2026-10-15 | Added M3: the EmailServer side of Content Builder's M4 — a `mailto:` "Disagree with this take?" link on every article card, to a new `FEEDBACK_EMAIL` (§5.2, §7.5). Decided with the operator to keep feedback human-filtered for launch rather than feeding it to the Reviewer automatically (M3 notes). |
 
 > **How to use this document.** The architecture doc says *what* and *why*,
 > across all three services. This spec says *how, with what, and in what
@@ -151,8 +153,12 @@ ALTER TABLE send_history
 
 ### 5.2 Environment Variables
 
-No new env vars — `content_api_key` values live in the database (§5.1), not
-in Render's environment.
+`content_api_key` values live in the database (§5.1), not in Render's
+environment. One env var added in M3:
+
+| Variable | Purpose |
+|---|---|
+| `FEEDBACK_EMAIL` | Where each article card's "Disagree with this take?" `mailto:` goes (§7.5). Shown to every subscriber, so a dedicated address (`pmfeedback@randy-snow.com`), not the operator's personal one. Falls back to `OPERATOR_EMAIL`; with neither set, the link is left off. |
 
 ---
 
@@ -251,6 +257,34 @@ those (`%20`, `%29`). Still deliberately not a markdown library.
 the number the operator confirms can't drift from who actually gets the
 email. The manual Builder/Send flow passes no type and still reaches every
 active subscriber.
+
+### 7.5 The Disagree link is rendered, not stored
+
+The renderer (`renderIssue` in `src/lib/issueRender.ts`) takes the feedback
+address and Issue date as parameters instead of reading `process.env`,
+because it also runs in the browser — the admin Issues page uses it to seed
+the hand-edit box. `GET /api/manager/issues` returns `feedback_email` for
+that, so a hand-edit starts from HTML that already has every card's link.
+
+Consequences worth knowing:
+- The link is added at render time, so an Issue filed *before* M3 gets it
+  too when sent now. An Issue that was hand-edited is stored as finished
+  HTML (`raw_html`) and keeps exactly the links it had when edited —
+  including none, if edited before M3.
+- The "issue date" in the pre-filled email is `created_at`'s UTC date.
+  Content Builder's own payload `date` isn't stored; the Conductor files
+  each Issue the morning of its send, so it's the same day.
+- A `mailto:` does nothing useful on a device with no mail app set up —
+  found in testing: webmail in a desktop browser opened a blank tab, while
+  the iPhone Mail app worked. Nothing in an email can detect this (mail
+  clients strip scripts; browsers don't expose whether a mailto handler
+  exists), so the address is also shown once as plain text after the last
+  article card, for the reader to copy. A friendlier "looks like your email
+  isn't set up" experience would need the link to go to an EmailServer page
+  instead — effectively the V2 feedback page (§9).
+- `FEEDBACK_EMAIL` is server-wide, not per newsletter. Fine while AI PM
+  Perspective is the only newsletter on the content pipeline; a second one
+  would need its own address (a column on `email_servers`).
 
 ---
 
@@ -355,6 +389,56 @@ actually went to 3) — now a per-type count from the same rule.
 
 ---
 
+### M3: "Disagree with this take?" Feedback Link
+
+**Goals:** The EmailServer side of Content Builder's M4 (architecture doc
+§11.3 "V1 of the feedback loop", §11.4): every article card carries a
+second small link next to "Read full article" — `Read full article ·
+Disagree with this take?` — a `mailto:` pre-filled with the article's
+identity so the reader only types their reason.
+
+**Decided before building (2026-10-15):** feedback goes to a human inbox,
+not straight to the Reviewer. The Reviewer checks drafts *before* a send, so
+it can't act on feedback about a sent email anyway; "incorporating" it means
+adding it to the Reviewer's RAG corpus. Doing that automatically would let
+anyone holding the email — a subscriber, or whoever it's forwarded to —
+write into what the AI is grounded on, with no human in between
+(knowledge-base poisoning / prompt injection). At launch volume, a person
+reading the replies and hand-adding the good ones to the corpus (Content
+Builder's seed script already reserves `source: 'feedback'` for this) is the
+right filter. Automating it is the architecture doc's V2, revisited once
+volume makes the manual step annoying.
+
+**Tasks:**
+1. Add the Disagree `mailto:` to `article_card` rendering; subject
+   `Disagree: <title>`. The body opens with blank space (mail clients put
+   the cursor at the top, so the reader just types), then a
+   "— Please write above this line —" divider, then the title, issue date
+   and article link for the operator. Reordered after operator testing:
+   the first version put a "Why I disagree:" prompt *below* the details.
+2. Address it to `FEEDBACK_EMAIL` (§5.2), passed into the renderer rather
+   than read inside it (§7.5).
+3. Keep the hand-edit box's starting HTML in step (§7.5).
+4. No new page, table, or endpoint.
+
+**Acceptance Criteria:**
+- [x] No new EmailServer table or route was added (one existing route's
+      response gained a field).
+- [x] The link is percent-encoded correctly — checked with a title
+      containing `&`, `"`, `:` and `?`, which arrive intact in the
+      pre-filled subject/body; with no address set, the link is omitted.
+- [ ] Every article card in a real sent daily and weekly shows both links.
+- [x] Clicking "Disagree with this take?" opens a pre-filled email to
+      `pmfeedback@randy-snow.com` with the article's title and issue date —
+      verified 2026-10-15 in a test-send on the iPhone Mail app. In desktop
+      webmail with no mail app set up it opens a blank tab, which is why
+      the plain-text address fallback exists (§7.5).
+- [x] A test message to `pmfeedback@randy-snow.com` actually arrives.
+      Verified 2026-10-15 (a separate mailbox on the operator's phone, not
+      a forward).
+
+---
+
 ## 9. Out of Scope (for this spec)
 
 Same boundaries as the architecture doc §14, plus:
@@ -364,8 +448,8 @@ Same boundaries as the architecture doc §14, plus:
 - The Reviewer "sends it back to the Writer" revision loop — named as a
   future enhancement in the architecture doc §11.5, not built here.
 - The feedback capture page + `issue_feedback` table (architecture doc
-  §11.3's "V2") — the mailto-only V1 of the feedback loop needs no
-  EmailServer changes at all.
+  §11.3's "V2") — the mailto-only V1 of the feedback loop is just M3's
+  rendering change; see M3 for why V2 waits.
 - The public self-service `/preferences` page — stays R3.
 
 ---

@@ -26,7 +26,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { data: issue, error: fetchError } = await supabase
     .from("issues")
-    .select("id, email_server_id, blocks, raw_html")
+    .select("id, email_server_id, blocks, raw_html, created_at")
     .eq("id", id)
     .single();
 

@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { composeEmail, type SectionContentMap } from "@/lib/composeEmail";
-import { renderIssue } from "@/lib/issueRender";
+import { renderIssue, issueDateFrom } from "@/lib/issueRender";
 import { withGreeting, sendNotification } from "@/lib/mailgun";
 import { appOrigin } from "@/lib/appUrl";
 import type { IssuePayload, ReviewerFlag } from "@/lib/issue-schema";
@@ -38,6 +38,15 @@ export function computeSendAfter(
   return new Date(Date.now() + AUTO_SEND_WINDOW_MS).toISOString();
 }
 
+// Where each article card's "Disagree with this take?" mailto goes
+// (architecture doc §11.3, V1 of the feedback loop). Its own setting
+// because, unlike OPERATOR_EMAIL, it's shown to every subscriber; falls
+// back to OPERATOR_EMAIL so the link still works if it isn't set. null =
+// neither set, and the renderer leaves the Disagree link off.
+export function feedbackEmail(): string | null {
+  return process.env.FEEDBACK_EMAIL || process.env.OPERATOR_EMAIL || null;
+}
+
 // Composes Template (existing email_sections, minus main_body) + this
 // Issue's rendered blocks into the final email - the same composeEmail()
 // the manual Builder/Send flow uses, just with main_body substituted for
@@ -46,7 +55,7 @@ export function computeSendAfter(
 // main_body string came from.
 export async function composeIssueForSend(
   emailServerId: string,
-  issue: Pick<IssueRow, "blocks" | "raw_html">
+  issue: Pick<IssueRow, "blocks" | "raw_html" | "created_at">
 ): Promise<{ subject: string; html: string }> {
   const { data: sectionRows, error } = await supabase
     .from("email_sections")
@@ -60,7 +69,10 @@ export async function composeIssueForSend(
     sectionMap[row.section_type as keyof SectionContentMap] = row.content ?? "";
   }
 
-  sectionMap.main_body = renderIssue({ blocks: issue.blocks, rawHtml: issue.raw_html });
+  sectionMap.main_body = renderIssue(
+    { blocks: issue.blocks, rawHtml: issue.raw_html },
+    { feedbackEmail: feedbackEmail(), issueDate: issueDateFrom(issue.created_at) }
+  );
 
   const { subject, html } = composeEmail(sectionMap, {
     unsubscribeUrl: MAILGUN_UNSUBSCRIBE_TOKEN,
@@ -73,7 +85,7 @@ export async function composeIssueForSend(
 // pages preview a manual send.
 export async function composeIssuePreview(
   emailServerId: string,
-  issue: Pick<IssueRow, "blocks" | "raw_html">
+  issue: Pick<IssueRow, "blocks" | "raw_html" | "created_at">
 ): Promise<{ subject: string; html: string }> {
   const { data: sectionRows, error } = await supabase
     .from("email_sections")
@@ -87,7 +99,10 @@ export async function composeIssuePreview(
     sectionMap[row.section_type as keyof SectionContentMap] = row.content ?? "";
   }
 
-  sectionMap.main_body = renderIssue({ blocks: issue.blocks, rawHtml: issue.raw_html });
+  sectionMap.main_body = renderIssue(
+    { blocks: issue.blocks, rawHtml: issue.raw_html },
+    { feedbackEmail: feedbackEmail(), issueDate: issueDateFrom(issue.created_at) }
+  );
 
   return composeEmail(sectionMap);
 }

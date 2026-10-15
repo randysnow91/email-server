@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { renderIssue } from "@/lib/issueRender";
+import { renderIssue, issueDateFrom } from "@/lib/issueRender";
 import { isValidEmail } from "@/lib/validation";
 import type { ReviewerFlag } from "@/lib/issue-schema";
 
@@ -58,6 +58,9 @@ export default function IssuesPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   // Per Issue type, since a daily and a weekly reach different subscribers
   // (fetchActiveSubscribers / preferencesFor in sendEmail.ts).
+  // Server-only setting, passed down by GET /api/manager/issues so the
+  // editor's starting HTML keeps each card's Disagree link.
+  const [feedbackEmail, setFeedbackEmail] = useState<string | null>(null);
   const [subscriberCounts, setSubscriberCounts] = useState<{ daily: number; weekly: number } | null>(
     null
   );
@@ -93,6 +96,7 @@ export default function IssuesPage() {
       if (!issuesRes.ok) throw new Error((await issuesRes.json()).error ?? "Failed to load issues.");
       const issuesData = await issuesRes.json();
       setIssues(issuesData.issues ?? []);
+      setFeedbackEmail(issuesData.feedback_email ?? null);
 
       if (dailyRes.ok && weeklyRes.ok) {
         const [dailyData, weeklyData] = await Promise.all([dailyRes.json(), weeklyRes.json()]);
@@ -145,7 +149,12 @@ export default function IssuesPage() {
   }
 
   function openEdit(issue: IssueRow) {
-    setEditValue(renderIssue({ blocks: issue.blocks, rawHtml: issue.raw_html }));
+    setEditValue(
+      renderIssue(
+        { blocks: issue.blocks, rawHtml: issue.raw_html },
+        { feedbackEmail, issueDate: issueDateFrom(issue.created_at) }
+      )
+    );
     setEditError(null);
     setEditing(true);
   }

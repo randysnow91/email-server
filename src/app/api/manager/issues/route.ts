@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { getActiveEmailServerId } from "@/lib/emailServer";
+import { feedbackEmail } from "@/lib/issues";
 
 // Admin-gated (proxy.ts covers /api/manager/*). Lists Issues for the active
 // newsletter, most recent first, for the /admin/issues review page.
@@ -18,5 +19,8 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ issues: data });
+  // feedback_email: the admin page renders an Issue in the browser to seed
+  // its editor, where FEEDBACK_EMAIL isn't available - without this, a
+  // hand-edit would silently drop every card's Disagree link.
+  return NextResponse.json({ issues: data, feedback_email: feedbackEmail() });
 }

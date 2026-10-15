@@ -16,7 +16,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
   const { data: issue, error } = await supabase
     .from("issues")
-    .select("email_server_id, blocks, raw_html, status")
+    .select("email_server_id, blocks, raw_html, status, created_at")
     .eq("id", id)
     .single();
 
