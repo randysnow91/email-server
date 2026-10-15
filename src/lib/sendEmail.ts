@@ -41,12 +41,29 @@ export async function composeForSend(
   return { subject, html: withGreeting(html) };
 }
 
-export async function fetchActiveSubscribers(emailServerId: string): Promise<Recipient[]> {
-  const { data, error } = await supabase
+// R2 M2, architecture doc §10: a daily Issue reaches daily/both
+// subscribers, a weekly reaches weekly/both. Shared with the subscriber
+// count the Issues page shows, so the confirm number matches the send.
+export function preferencesFor(issueType: "daily" | "weekly"): string[] {
+  return [issueType, "both"];
+}
+
+// With an issueType, only subscribers whose preference covers it (see
+// preferencesFor). Without one - the manual Builder/Send flow, which has no
+// daily/weekly notion - every active subscriber, as before.
+export async function fetchActiveSubscribers(
+  emailServerId: string,
+  issueType?: "daily" | "weekly"
+): Promise<Recipient[]> {
+  let query = supabase
     .from("subscribers")
     .select("email, name, unsubscribe_token")
     .eq("email_server_id", emailServerId)
     .eq("unsubscribed", false);
+
+  if (issueType) query = query.in("subscription_preference", preferencesFor(issueType));
+
+  const { data, error } = await query;
 
   if (error) throw new Error(error.message);
 

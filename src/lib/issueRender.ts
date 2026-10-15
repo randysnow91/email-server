@@ -17,12 +17,28 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// Minimal markdown: **bold** only, plus preserved line breaks via the
-// caller's white-space:pre-wrap. No markdown library for what's currently
-// just the occasional weekly "text" block (§6.2) - a real one is easy to
-// add later if a richer format is ever needed.
+// [title](url) with an http(s) URL only. Matched against the already-escaped
+// text, so the title and URL can't carry raw HTML, and a quote in the URL is
+// already &quot; and can't break out of href. Anything else - javascript:,
+// mailto:, a relative path, a URL containing a space or ")" - doesn't match
+// and stays visible as plain escaped text rather than becoming a link.
+const LINK_PATTERN = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi;
+
+// Minimal markdown: **bold** and [links](https://...), plus preserved line
+// breaks via the caller's white-space:pre-wrap. No markdown library for
+// what's currently just the occasional weekly "text" block (§6.2) - a real
+// one is easy to add later if a richer format is ever needed.
 function renderMarkdownLite(body: string): string {
-  return escapeHtml(body).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  return (
+    escapeHtml(body)
+      .replace(LINK_PATTERN, (_match, title: string, url: string) => {
+        // "*" as &#42; in the href (same URL once the browser decodes it) so
+        // the bold pass below can't pair up asterisks inside a URL.
+        const href = url.replace(/\*/g, "&#42;");
+        return `<a href="${href}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;">${title}</a>`;
+      })
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+  );
 }
 
 function renderArticleCard(block: ArticleCardBlock): string {

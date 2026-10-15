@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { getActiveEmailServerId } from "@/lib/emailServer";
 import { isValidEmail } from "@/lib/validation";
 import { domainCanReceiveEmail } from "@/lib/emailDomain";
+import { preferencesFor } from "@/lib/sendEmail";
 
 const DEFAULT_LIMIT = 50;
 
@@ -36,6 +37,13 @@ export async function GET(request: NextRequest) {
     query = query.eq("unsubscribed", false);
   } else if (status === "unsubscribed") {
     query = query.eq("unsubscribed", true);
+  }
+
+  // Optional: only subscribers a daily/weekly Issue would actually reach -
+  // the Issues page's "Send this to N subscribers?" count.
+  const issueType = params.get("issue_type");
+  if (issueType === "daily" || issueType === "weekly") {
+    query = query.in("subscription_preference", preferencesFor(issueType));
   }
 
   const { data, error, count } = await query;

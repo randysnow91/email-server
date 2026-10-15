@@ -56,7 +56,11 @@ export default function IssuesPage() {
   const [issues, setIssues] = useState<IssueRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [subscriberCount, setSubscriberCount] = useState<number | null>(null);
+  // Per Issue type, since a daily and a weekly reach different subscribers
+  // (fetchActiveSubscribers / preferencesFor in sendEmail.ts).
+  const [subscriberCounts, setSubscriberCounts] = useState<{ daily: number; weekly: number } | null>(
+    null
+  );
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewData | null>(null);
@@ -81,17 +85,18 @@ export default function IssuesPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [issuesRes, subsRes] = await Promise.all([
+      const [issuesRes, dailyRes, weeklyRes] = await Promise.all([
         fetch("/api/manager/issues"),
-        fetch("/api/manager/subscribers?limit=1"),
+        fetch("/api/manager/subscribers?limit=1&issue_type=daily"),
+        fetch("/api/manager/subscribers?limit=1&issue_type=weekly"),
       ]);
       if (!issuesRes.ok) throw new Error((await issuesRes.json()).error ?? "Failed to load issues.");
       const issuesData = await issuesRes.json();
       setIssues(issuesData.issues ?? []);
 
-      if (subsRes.ok) {
-        const subsData = await subsRes.json();
-        setSubscriberCount(subsData.total ?? 0);
+      if (dailyRes.ok && weeklyRes.ok) {
+        const [dailyData, weeklyData] = await Promise.all([dailyRes.json(), weeklyRes.json()]);
+        setSubscriberCounts({ daily: dailyData.total ?? 0, weekly: weeklyData.total ?? 0 });
       }
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Failed to load issues.");
@@ -284,6 +289,7 @@ export default function IssuesPage() {
             const isConfirming = confirmingId === issue.id;
             const isActing = actingId === issue.id;
             const hasOverride = Boolean(issue.raw_html);
+            const subscriberCount = subscriberCounts?.[issue.type] ?? null;
 
             return (
               <li

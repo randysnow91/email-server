@@ -12,7 +12,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { data: issue, error: fetchError } = await supabase
     .from("issues")
-    .select("id, email_server_id, status, blocks, raw_html")
+    .select("id, email_server_id, type, status, blocks, raw_html")
     .eq("id", id)
     .single();
 
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   let subscribers;
   try {
-    subscribers = await fetchActiveSubscribers(issue.email_server_id);
+    subscribers = await fetchActiveSubscribers(issue.email_server_id, issue.type);
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to fetch subscribers." },
