@@ -1,7 +1,7 @@
 # Claude Code Build Spec — EmailServer (R2)
 
-**Status:** v1.1 — M1 built and verified, except the auto-send cron (deferred,
-see §8's M1 notes and §10).
+**Status:** v1.2 — M1 and M2 built and verified, except the auto-send cron
+(deferred, see §8's M1 notes and §10). R2's EmailServer work is complete.
 **Derived from:** `CONTENT-PIPELINE-ARCHITECTURE.md` (the cross-repo design —
 read it first, especially §4, §6, §9, §12) + planning discussion (2026-09-15).
 **Scope:** EmailServer's own R2 work only. Content Builder and Conductor each
@@ -13,6 +13,7 @@ architecture doc §16.5 for why this isn't one shared document anymore
 |---------|------|---------|
 | v1.0 | 2026-09-15 | Split out of the original cross-repo `R2_BUILD-SPEC.md` (commit `ed92913`) into a doc scoped to EmailServer alone. Content unchanged from that version's M1 section, reorganized as this repo's own spec. |
 | v1.1 | 2026-09-29 | M1 built and verified against a hand-crafted `IssuePayload` (no Content Builder/Conductor needed yet), then re-verified end-to-end against Content Builder's real output. Three review-UI gaps found in real use — an editor, a per-Issue test-send, and a read-only view of sent/skipped Issues — turned out to need their own small routes; see §6 and §8. Auto-send cron not built; drafts past `send_after` currently just wait for manual approval (§8, §10). |
+| v1.2 | 2026-10-15 | M2's verification found a real gap: Issue sends ignored `subscription_preference` and went to every active subscriber. Fixed (commit `ee3d746`) — Issue sends now filter by type, and the Issues page's confirm count uses the same rule. Also added `[title](url)` links to text blocks for Content Builder's weekly "Articles by Day" list (§7.3). Verified end-to-end with a real Conductor → Content Builder → EmailServer weekly run. |
 
 > **How to use this document.** The architecture doc says *what* and *why*,
 > across all three services. This spec says *how, with what, and in what
@@ -196,6 +197,12 @@ than extending Builder/Send — see the routes it actually calls below.)*
   Template changed since. Falls back to a live compose (`archived: false`)
   for `draft`/`approved`/`skipped`, or if no snapshot is found.
 - `POST /api/manager/issues/:id/send`, `.../skip` — approve & send, or skip.
+  The send reaches only subscribers whose preference covers the Issue's
+  type (§7.4).
+- `GET /api/manager/subscribers?issue_type=daily|weekly` — the existing
+  subscriber list route, with an optional filter added in M2 so the Issues
+  page's "Send this to N subscribers?" count matches who the send will
+  actually reach.
 - `POST /api/manager/issues/:id/test-send` — send a test copy to one address,
   composed from the Issue's *current* content (including any edit override).
   Added after real review turned up that the existing `/api/sender/test-send`
@@ -225,6 +232,25 @@ Every interaction in this spec is EmailServer being called *by* the
 Conductor. EmailServer has no knowledge of Content Builder's existence, its
 agents, or its RAG corpus — the ingestion endpoint is content-source-agnostic
 by design (architecture doc §3, principle 1).
+
+### 7.3 Text blocks support bold and links — nothing else
+
+`text` and `closing_thought` bodies go through `renderMarkdownLite`
+(`src/lib/issueRender.ts`): `**bold**`, `[title](url)`, and line breaks.
+Everything is HTML-escaped first; a link only renders for an `http`/`https`
+URL, so `javascript:`, relative paths and other schemes stay visible as
+plain text, and a quote in a URL can't break out of `href`. A URL containing
+a space or `)` won't match either — Content Builder should percent-encode
+those (`%20`, `%29`). Still deliberately not a markdown library.
+
+### 7.4 Send filtering lives in one rule
+
+`preferencesFor(type)` in `src/lib/sendEmail.ts` — a daily Issue reaches
+`daily`/`both`, a weekly reaches `weekly`/`both`. Both the Issue send
+(`fetchActiveSubscribers`) and the Issues page's subscriber count use it, so
+the number the operator confirms can't drift from who actually gets the
+email. The manual Builder/Send flow passes no type and still reaches every
+active subscriber.
 
 ---
 
@@ -304,11 +330,28 @@ only becoming real build work if a gap is found.
    two approvals, no dedup — intended behavior, not a bug (architecture doc
    §8).
 
+**What verification found:** a real gap. The Issue send route called
+`fetchActiveSubscribers()` with no notion of type, so *every* Issue — daily
+or weekly — went to every active subscriber. A weekly would have reached
+daily-only subscribers, and every daily sent so far had also reached anyone
+set to weekly-only. Fixed by filtering on the Issue's type (§7.4). A second,
+smaller gap surfaced in testing: the Issues page's confirm prompt showed the
+overall active total regardless of type ("Send this to 4" for a daily that
+actually went to 3) — now a per-type count from the same rule.
+
 **Acceptance Criteria:**
-- [ ] Sending a weekly Issue reaches only `weekly`/`both` subscribers;
+- [x] Sending a weekly Issue reaches only `weekly`/`both` subscribers;
       sending a daily reaches only `daily`/`both` — verified with at least
-      one subscriber in each preference bucket.
-- [ ] A `both` subscriber on a Friday receives both emails as separate sends.
+      one subscriber in each preference bucket. Verified 2026-10-15 with 2
+      daily, 1 weekly, 1 both: the daily went to 3 (the weekly-only
+      subscriber confirmed it didn't arrive), the weekly went to 2.
+- [x] A `both` subscriber on a Friday receives both emails as separate sends.
+      Verified 2026-10-15 (a Thursday, same mechanics): the `both`
+      subscriber received the daily and the weekly as two separate sends,
+      two approvals, no dedup.
+- [x] *(Added during M2)* Text-block links render in a real weekly — the
+      "📅 Articles by Day" list from a real Conductor-triggered weekly run
+      arrived with working links.
 
 ---
 
