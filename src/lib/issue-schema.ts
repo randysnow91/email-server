@@ -19,6 +19,12 @@
 // reviewerFlags during its M2/M3 (link validity, summary accuracy, and the
 // RAG-grounded practice-alignment check) - this file didn't have a consumer
 // for that field until now.
+//
+// Synced again 2026-10-15: Content Builder added "dropped_article" on
+// 2026-10-05 and this copy never got it, so isValidIssuePayload() rejected
+// the *whole* Issue (400) on any day an article was dropped. Found in a
+// cross-repo check before launch. The type list is now one array, used by
+// both the type and the validator, so the two can't disagree here.
 
 export type ArticleCardBlock = {
   kind: "article_card";
@@ -49,10 +55,21 @@ export type IssueType = "daily" | "weekly";
 
 // The Reviewer's findings (architecture doc §11.1, §11.5). "broken_link" and
 // "inaccurate_summary" are the two mechanical checks; "practice_alignment"
-// is the RAG-grounded one. Findings annotate - they never block generation,
-// but a non-empty list here keeps this Issue from getting a send_after
-// (see the ingestion route).
-export type ReviewerFlagType = "broken_link" | "inaccurate_summary" | "practice_alignment";
+// is the RAG-grounded one. "dropped_article" isn't a Reviewer check - Content
+// Builder's orchestrator raises it when an article from Curator/Writer
+// couldn't be matched back to a real candidate and was left out - but it
+// rides the same mechanism, since that's what surfaces a problem to the
+// operator and blocks auto-send. Findings annotate - they never block
+// generation, but a non-empty list here keeps this Issue from getting a
+// send_after (see the ingestion route).
+export const REVIEWER_FLAG_TYPES = [
+  "broken_link",
+  "inaccurate_summary",
+  "practice_alignment",
+  "dropped_article",
+] as const;
+
+export type ReviewerFlagType = (typeof REVIEWER_FLAG_TYPES)[number];
 
 export type ReviewerFlag = {
   type: ReviewerFlagType;
@@ -105,9 +122,7 @@ function isValidReviewerFlag(value: unknown): value is ReviewerFlag {
   const flag = value as Record<string, unknown>;
 
   return (
-    (flag.type === "broken_link" ||
-      flag.type === "inaccurate_summary" ||
-      flag.type === "practice_alignment") &&
+    REVIEWER_FLAG_TYPES.includes(flag.type as ReviewerFlagType) &&
     isNonEmptyString(flag.articleUrl) &&
     isNonEmptyString(flag.message)
   );

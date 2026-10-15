@@ -43,6 +43,7 @@ const FLAG_LABEL: Record<ReviewerFlag["type"], string> = {
   broken_link: "Broken link",
   inaccurate_summary: "Summary may not match the article",
   practice_alignment: "PM Perspective may not align with a practice",
+  dropped_article: "An article was dropped",
 };
 
 const STATUS_BADGE: Record<IssueRow["status"], string> = {
